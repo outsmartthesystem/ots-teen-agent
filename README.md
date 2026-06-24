@@ -21,11 +21,17 @@ sentinels (`[INTERVIEW_COMPLETE]` + the three `[SAFETY_EVENT:*]`), and on comple
 hands the transcript to Prompt B for scoring. Verified end-to-end in a browser
 against a mock model: boot/placeholder substitution, the turn loop, native click +
 Enter, completion → scoring → fence-tolerant JSON parse → result, and the **CRISIS**
-path (halt + resources + suppressed scoring + blocked parent report). The full teen
-result view and the preview/veto gate are stubbed (`renderResultStub`) — that's step 3.
+path (halt + resources + suppressed scoring + blocked parent report).
 
-Not yet built: the Prompt B teen result UI + preview/veto, the real registration
-page, the two Make scenarios, and the safety backend. See **Roadmap** below.
+**Teen result UI — done.** `renderResult` builds the warm teen-facing result from
+the Prompt B output: stage badge (+ partial-evidence note), the goal mirror, the
+five-bar chart (null dimensions render as "not enough info yet"), strength + verbatim
+quote, the biggest unlock, the seven-day move, an optional high-scorer pathway, and
+the two-way choice. All model text goes in via `textContent`. Verified in-browser
+with a full scoring payload (including a null bar + partial note).
+
+Not yet built: the preview/veto gate, the real registration page, the two Make
+scenarios, and the safety backend. See **Roadmap** below.
 
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
 regenerates `prompts.js` (the runtime copy the frontend loads).
@@ -93,7 +99,7 @@ not stored in the repo). Nothing is deployed to Render yet.
 1. ✅ Foundation + session-token contract
 2. ✅ chat.js port — Prompt A turn loop, all four sentinels, session save/resume,
    completion → Prompt B scoring call → JSON parse (result render stubbed)
-3. ⬜ Teen result UI — render the stage badge, 5-bar chart, and
+3. ✅ Teen result UI — stage badge, 5-bar chart (null-safe), and
    mirror/strength/unlock/seven-day-move/choice prose from the Prompt B output
 4. ⬜ Preview/veto gate → freeze approved items → `POST /api/parent-report` + PDF
 5. ⬜ Real registration page (replaces `dev-register.html`)

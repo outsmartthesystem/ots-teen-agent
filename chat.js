@@ -315,7 +315,7 @@ async function runScoring() {
     }
 
     window.scoringResult = parsed;
-    renderResultStub(parsed); // STEP 3 replaces this with the full teen result + preview/veto
+    renderResult(parsed);
     console.log('SCORING RESULT (full):', parsed);
   } catch (e) {
     status.remove();
@@ -334,28 +334,137 @@ function parseScoringJSON(text) {
   try { return JSON.parse(t.slice(start, end + 1)); } catch { return null; }
 }
 
-// STEP-3 STUB: proves the A→complete→B pipeline. The real teen result (stage
-// badge, five-bar chart, mirror/strength/unlock/seven-day-move/choice prose)
-// and the preview/veto gate live in step 3.
-function renderResultStub(parsed) {
+// STEP 3: the teen result view. Warm by design (the interview was neutral).
+// Renders teen_output: stage badge, the goal mirror, the five-bar chart (null
+// dimensions render as "not enough info yet"), strength + verbatim quote, the
+// biggest unlock, the seven-day move, an optional high-scorer pathway, and the
+// two-way choice. Every model-authored string goes in via textContent — never
+// innerHTML — so nothing the model wrote can render as markup.
+function renderResult(parsed) {
   showScreen('result');
-  const el = document.getElementById('resultBody');
-  const stage = parsed.teen_output && parsed.teen_output.stage_display;
-  const strength = parsed.teen_output && parsed.teen_output.demonstrated_strength;
-  el.innerHTML = '';
-  const pill = document.createElement('div');
-  pill.className = 'result-pill';
-  pill.textContent = 'Result generated ✓';
-  el.appendChild(pill);
-  const h = document.createElement('h2');
-  h.textContent = window.session.teen_first_name + ", here's where you are";
-  el.appendChild(h);
-  if (stage) { const p = document.createElement('p'); p.className = 'result-stage'; p.textContent = 'Stage: ' + stage; el.appendChild(p); }
-  if (strength && strength.text) { const p = document.createElement('p'); appendTextWithLineBreaks(p, strength.text); el.appendChild(p); }
-  const note = document.createElement('p');
-  note.className = 'result-note';
-  note.textContent = 'The full result view and the parent-report preview/approve step are the next build step. The complete scored result is in the browser console.';
-  el.appendChild(note);
+  const t = parsed.teen_output || {};
+  const level = parsed.level || {};
+  const root = document.getElementById('resultBody');
+  root.innerHTML = '';
+
+  // Stage badge (hidden when fewer than 4 dimensions were assessable).
+  if (t.stage_display) {
+    root.appendChild(elem('div', 'stage-badge', t.stage_display));
+    if (level.partial_note) {
+      root.appendChild(elem('div', 'partial-note', 'Based on partial evidence — a few questions got skipped, which is fine.'));
+    }
+  }
+
+  root.appendChild(elem('h1', 'result-h1', window.session.teen_first_name + ", here's where you are"));
+
+  // The mirror — their goal reflected back.
+  if (t.goal_reflected) {
+    const m = elem('p', 'mirror');
+    appendTextWithLineBreaks(m, t.goal_reflected);
+    root.appendChild(m);
+  }
+
+  // Five-dimension chart.
+  if (Array.isArray(t.bars) && t.bars.length) {
+    root.appendChild(buildBars(t.bars));
+  }
+
+  // Strength + verbatim evidence quote.
+  const strength = t.demonstrated_strength;
+  if (strength && strength.text) {
+    const sec = section('What you’ve already got');
+    sec.appendChild(para(strength.text));
+    if (strength.evidence_quote) {
+      sec.appendChild(elem('blockquote', 'evidence', '“' + strength.evidence_quote + '”'));
+    }
+    root.appendChild(sec);
+  }
+
+  // Biggest unlock (the growth area framed as a learnable skill).
+  const unlock = t.biggest_unlock;
+  if (unlock && (unlock.skill || unlock.framing)) {
+    const sec = section('Your biggest unlock' + (unlock.skill ? ': ' + unlock.skill : ''));
+    if (unlock.framing) sec.appendChild(para(unlock.framing));
+    root.appendChild(sec);
+  }
+
+  // Seven-day move.
+  if (t.seven_day_move) {
+    const sec = section('This week', 'move');
+    sec.appendChild(para(t.seven_day_move));
+    root.appendChild(sec);
+  }
+
+  // High-scorer pathway (only present for Building / Outsmarting).
+  if (t.high_scorer_pathway) {
+    const sec = section('Where this can go', 'pathway');
+    sec.appendChild(para(t.high_scorer_pathway));
+    root.appendChild(sec);
+  }
+
+  // The two-way choice — never "your score is low so you need this".
+  if (t.choice && (t.choice.solo || t.choice.ots)) {
+    root.appendChild(elem('h3', 'choice-title', 'Two ways to go from here'));
+    const wrap = elem('div', 'choice');
+    if (t.choice.solo) { const c = elem('div', 'choice-card'); appendTextWithLineBreaks(c, t.choice.solo); wrap.appendChild(c); }
+    if (t.choice.ots)  { const c = elem('div', 'choice-card primary'); appendTextWithLineBreaks(c, t.choice.ots); wrap.appendChild(c); }
+    root.appendChild(wrap);
+  }
+
+  // Bridge to the preview/veto step (step 4 — not yet built).
+  const next = elem('div', 'next-note');
+  if (window.blockParentReport) {
+    next.textContent = 'Nothing from this goes to ' + window.session.parent_first_name + '. This result is just for you.';
+  } else {
+    appendTextWithLineBreaks(next, 'Next, you’ll get to preview exactly what — if anything — goes to ' +
+      window.session.parent_first_name + ', and keep anything private before it sends. (That preview/approve step is the next build step.)');
+  }
+  root.appendChild(next);
+
+  scrollResultTop();
+}
+
+function buildBars(bars) {
+  const wrap = elem('div', 'bars');
+  bars.forEach(b => {
+    const row = elem('div', 'bar-row');
+    row.appendChild(elem('div', 'bar-label', b.dimension));
+    const track = elem('div', 'bar-track');
+    if (b.score == null) {
+      track.className = 'bar-track empty';
+      track.appendChild(elem('span', 'bar-empty', 'not enough info yet'));
+      row.appendChild(track);
+      row.appendChild(elem('div', 'bar-score muted', '—'));
+    } else {
+      const fill = elem('div', 'bar-fill');
+      fill.style.width = (clamp(b.score, 0, 5) / 5 * 100) + '%';
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(elem('div', 'bar-score', String(b.score)));
+    }
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+// Small DOM builders. text goes in via textContent (safe for model output).
+function elem(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function para(text) { const p = document.createElement('p'); appendTextWithLineBreaks(p, text); return p; }
+function section(title, extraCls) {
+  const sec = document.createElement('section');
+  sec.className = 'result-section' + (extraCls ? ' ' + extraCls : '');
+  sec.appendChild(elem('h3', 'section-title', title));
+  return sec;
+}
+function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+function scrollResultTop() {
+  const s = document.getElementById('screen-result');
+  if (s) s.scrollTop = 0;
 }
 
 // ─── TRANSCRIPT (for scoring) ────────────────────────────────────────────
