@@ -88,6 +88,31 @@
     .choice-card.primary { border-color: var(--accent); background: #0e1830; }
     .next-note { margin-top: 24px; padding: 12px 14px; background: var(--panel-2); border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 13px; }
     @media (max-width: 480px) { .choice { grid-template-columns: 1fr; } .bar-row { grid-template-columns: 104px 1fr 20px; } }
+
+    /* Preview / veto screen */
+    #screen-preview, #screen-sent { overflow-y: auto; align-items: flex-start; padding: 32px 16px; }
+    #screen-preview .card, #screen-sent .card { margin: auto; max-width: 600px; }
+    .pv-h1 { font-size: 22px; margin: 0 0 8px; }
+    .pv-intro { color: var(--muted); font-size: 14px; margin: 0 0 22px; }
+    .pv-item { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; transition: opacity .2s; }
+    .pv-item.private { opacity: .5; }
+    .pv-cat { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .pv-text { font-size: 15px; }
+    .pv-quote { margin: 10px 0 0; padding-left: 12px; border-left: 3px solid var(--good); font-style: italic; }
+    .pv-edit-area { width: 100%; margin-top: 6px; min-height: 70px; padding: 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg); color: var(--text); font: inherit; font-size: 15px; resize: vertical; }
+    .pv-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .pv-toggle, .pv-edit { font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
+    .pv-toggle { border-color: var(--good); color: var(--good); }
+    .pv-toggle.off { border-color: var(--line); color: var(--muted); }
+    .pv-readonly { margin: 22px 0; padding: 16px; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; }
+    .pv-ro-title { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+    .pv-readonly p { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+    .pv-readonly ul { margin: 0 0 8px; padding-left: 18px; }
+    .pv-readonly li { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+    .pv-send-row { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+    .pv-send { flex: 1; min-width: 180px; }
+    .pv-error { margin-top: 12px; color: var(--danger); font-size: 13px; }
+    .result-cta { margin-top: 24px; width: 100%; }
     .err-box { background: #2a1416; border: 1px solid #5a2730; color: var(--danger); padding: 16px; border-radius: 10px; }
     .spinner { width: 26px; height: 26px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 14px; }
 
@@ -144,9 +169,19 @@
     </div>
   </div>
 
-  <!-- RESULT (step-3 stub) -->
+  <!-- RESULT -->
   <div class="screen" id="screen-result">
     <div class="card" id="resultBody"></div>
+  </div>
+
+  <!-- PREVIEW / VETO -->
+  <div class="screen" id="screen-preview">
+    <div class="card" id="previewBody"></div>
+  </div>
+
+  <!-- SENT -->
+  <div class="screen" id="screen-sent">
+    <div class="card" id="sentBody"></div>
   </div>
 
   <script src="prompts.js"></script>

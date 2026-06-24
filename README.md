@@ -30,8 +30,16 @@ quote, the biggest unlock, the seven-day move, an optional high-scorer pathway, 
 the two-way choice. All model text goes in via `textContent`. Verified in-browser
 with a full scoring payload (including a null bar + partial note).
 
-Not yet built: the preview/veto gate, the real registration page, the two Make
-scenarios, and the safety backend. See **Roadmap** below.
+**Preview/veto gate — done.** From the result, the teen reviews each
+`shareable_item` with share / keep-private + inline edit; the fixed framing,
+confidence summary, and program fit are shown read-only. On approval the report is
+**frozen** (no Prompt B re-call) and only the approved + edited items POST to
+`/api/parent-report`; the parent is never told what was withheld. A "Don't send
+anything" path is included. Verified end-to-end against the mock: a vetoed item is
+excluded, an edited item carries its new text, and the framing always rides along.
+
+Not yet built: the real registration page, the two Make scenarios, and the safety
+backend. See **Roadmap** below.
 
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
 regenerates `prompts.js` (the runtime copy the frontend loads).
@@ -101,7 +109,8 @@ not stored in the repo). Nothing is deployed to Render yet.
    completion → Prompt B scoring call → JSON parse (result render stubbed)
 3. ✅ Teen result UI — stage badge, 5-bar chart (null-safe), and
    mirror/strength/unlock/seven-day-move/choice prose from the Prompt B output
-4. ⬜ Preview/veto gate → freeze approved items → `POST /api/parent-report` + PDF
+4. ✅ Preview/veto gate → freeze approved + edited items → `POST /api/parent-report`
+   (PDF of the teen result is still a small to-do)
 5. ⬜ Real registration page (replaces `dev-register.html`)
 6. ⬜ Two Make scenarios (teen result side + parent report side)
 7. ⬜ **Safety backend** — the launch gate: escalation SOP, who's notified on

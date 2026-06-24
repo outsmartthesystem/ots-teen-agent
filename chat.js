@@ -411,17 +411,169 @@ function renderResult(parsed) {
     root.appendChild(wrap);
   }
 
-  // Bridge to the preview/veto step (step 4 — not yet built).
-  const next = elem('div', 'next-note');
+  // Bridge to the preview/veto step.
+  const parent = window.session.parent_first_name;
   if (window.blockParentReport) {
-    next.textContent = 'Nothing from this goes to ' + window.session.parent_first_name + '. This result is just for you.';
+    root.appendChild(elem('div', 'next-note', 'Nothing from this goes to ' + parent + '. This result is just for you.'));
   } else {
-    appendTextWithLineBreaks(next, 'Next, you’ll get to preview exactly what — if anything — goes to ' +
-      window.session.parent_first_name + ', and keep anything private before it sends. (That preview/approve step is the next build step.)');
+    const cta = elem('button', 'btn btn-primary result-cta', 'Next: choose what ' + parent + ' sees →');
+    cta.addEventListener('click', showPreview);
+    root.appendChild(cta);
   }
-  root.appendChild(next);
 
   scrollResultTop();
+}
+
+// ─── PREVIEW / VETO (step 4) ─────────────────────────────────────────────
+// The teen reviews each shareable disclosure and chooses share / keep-private
+// (with inline edit). The fixed framing, confidence summary, and program fit
+// are shown read-only — they're framing, not the teen's disclosures. On approval
+// the report is FROZEN (no Prompt B re-call) and only the approved + edited items
+// are sent. The parent is never told how many items were withheld.
+function showPreview() {
+  if (window.blockParentReport) return; // safety guard — never reachable, but defensive
+  const draft = (window.scoringResult && window.scoringResult.parent_report_draft) || {};
+  window.previewItems = (draft.shareable_items || []).map(it => ({
+    id: it.id, category: it.category, text: it.text, evidence_quote: it.evidence_quote || null, shared: true
+  }));
+  showScreen('preview');
+  renderPreview(draft);
+}
+
+function renderPreview(draft) {
+  const root = document.getElementById('previewBody');
+  root.innerHTML = '';
+  const parent = window.session.parent_first_name;
+
+  root.appendChild(elem('h1', 'pv-h1', 'What goes to ' + parent));
+  root.appendChild(elem('p', 'pv-intro', 'You decide what ' + parent + ' sees. Switch anything to private to keep it to yourself, or edit to reword it. They won’t be told anything was left out.'));
+
+  window.previewItems.forEach(it => root.appendChild(buildPreviewItem(it)));
+
+  // Read-only framing the teen can see but not veto.
+  const fixed = draft.fixed_framing || {};
+  const ro = elem('div', 'pv-readonly');
+  ro.appendChild(elem('div', 'pv-ro-title', 'What ' + parent + ' also sees (you can’t change this part)'));
+  if (fixed.limitation) ro.appendChild(para(fixed.limitation));
+  if (Array.isArray(fixed.what_not_to_do) && fixed.what_not_to_do.length) {
+    const ul = document.createElement('ul');
+    fixed.what_not_to_do.forEach(x => { const li = document.createElement('li'); appendTextWithLineBreaks(li, x); ul.appendChild(li); });
+    ro.appendChild(ul);
+  }
+  if (draft.confidence_summary) ro.appendChild(para(draft.confidence_summary));
+  if (draft.program_fit && draft.program_fit.text) ro.appendChild(para(draft.program_fit.text));
+  root.appendChild(ro);
+
+  const send = elem('button', 'btn btn-primary pv-send', 'Send to ' + parent);
+  send.addEventListener('click', sendParentReport);
+  const skip = elem('button', 'btn btn-ghost pv-skip', 'Don’t send anything');
+  skip.addEventListener('click', () => renderSent(false));
+  const row = elem('div', 'pv-send-row');
+  row.appendChild(send); row.appendChild(skip);
+  root.appendChild(row);
+
+  const s = document.getElementById('screen-preview');
+  if (s) s.scrollTop = 0;
+}
+
+function buildPreviewItem(item) {
+  const card = elem('div', 'pv-item');
+  card.appendChild(elem('div', 'pv-cat', categoryLabel(item.category)));
+  const textEl = elem('div', 'pv-text');
+  appendTextWithLineBreaks(textEl, item.text);
+  card.appendChild(textEl);
+  if (item.evidence_quote) card.appendChild(elem('blockquote', 'pv-quote', '“' + item.evidence_quote + '”'));
+
+  const actions = elem('div', 'pv-actions');
+  const toggle = elem('button', 'pv-toggle');
+  const edit = elem('button', 'pv-edit', 'Edit');
+  actions.appendChild(toggle); actions.appendChild(edit);
+  card.appendChild(actions);
+
+  function applyShared() {
+    card.classList.toggle('private', !item.shared);
+    toggle.textContent = item.shared ? 'Sharing ✓' : 'Private';
+    toggle.classList.toggle('off', !item.shared);
+  }
+  applyShared();
+  toggle.addEventListener('click', () => { item.shared = !item.shared; applyShared(); });
+
+  let ta = null;
+  edit.addEventListener('click', () => {
+    if (!ta) {
+      ta = document.createElement('textarea');
+      ta.className = 'pv-edit-area';
+      ta.value = item.text;
+      textEl.style.display = 'none';
+      card.insertBefore(ta, textEl.nextSibling);
+      edit.textContent = 'Save';
+    } else {
+      item.text = ta.value.trim() || item.text;
+      textEl.textContent = '';
+      appendTextWithLineBreaks(textEl, item.text);
+      textEl.style.display = '';
+      ta.remove(); ta = null;
+      edit.textContent = 'Edit';
+    }
+  });
+
+  return card;
+}
+
+function categoryLabel(cat) {
+  return ({
+    what_matters: 'What matters to you',
+    strength: 'A strength you showed',
+    growth_area: 'A growth area',
+    environmental: 'Context worth knowing'
+  })[cat] || 'Shared';
+}
+
+async function sendParentReport() {
+  const sendBtn = document.querySelector('.pv-send');
+  if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; }
+  const draft = (window.scoringResult && window.scoringResult.parent_report_draft) || {};
+
+  // FREEZE: approved (shared) items with their possibly-edited text. No Prompt B re-call.
+  const approved_report = {
+    shareable_items: window.previewItems
+      .filter(i => i.shared)
+      .map(i => ({ id: i.id, category: i.category, text: i.text, evidence_quote: i.evidence_quote })),
+    fixed_framing: draft.fixed_framing || null,
+    confidence_summary: draft.confidence_summary || '',
+    program_fit: draft.program_fit || null
+  };
+
+  try {
+    const r = await fetch('/api/parent-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t: window.rawToken, approved_report })
+    });
+    const j = await r.json();
+    if (!r.ok || !j.success) throw new Error(j.error || 'send failed');
+    clearSession();
+    renderSent(true);
+  } catch (e) {
+    if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = 'Send to ' + window.session.parent_first_name; }
+    const prev = document.querySelector('.pv-error');
+    if (prev) prev.remove();
+    document.getElementById('previewBody').appendChild(
+      elem('div', 'pv-error', 'Couldn’t send just now: ' + e.message + '. Try again in a moment.'));
+    console.error('parent-report send error:', e);
+  }
+}
+
+function renderSent(didSend) {
+  showScreen('sent');
+  const root = document.getElementById('sentBody');
+  root.innerHTML = '';
+  const parent = window.session.parent_first_name;
+  root.appendChild(elem('div', 'stage-badge', didSend ? 'Sent ✓' : 'Kept private'));
+  root.appendChild(elem('h1', 'result-h1', didSend ? 'Done.' : 'Nothing sent.'));
+  root.appendChild(para(didSend
+    ? 'Your result went to ' + parent + ' — only what you chose. That’s how this works.'
+    : 'Nothing went to ' + parent + '. This stays with you.'));
 }
 
 function buildBars(bars) {
@@ -597,7 +749,7 @@ function appendTextWithLineBreaks(parent, text) {
 
 // ─── UI PLUMBING ─────────────────────────────────────────────────────────
 function showScreen(name) {
-  ['loading', 'error', 'resume', 'chat', 'result'].forEach(s => {
+  ['loading', 'error', 'resume', 'chat', 'result', 'preview', 'sent'].forEach(s => {
     const el = document.getElementById('screen-' + s);
     if (el) el.style.display = (s === name) ? 'flex' : 'none';
   });
