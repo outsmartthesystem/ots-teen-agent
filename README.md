@@ -105,7 +105,16 @@ agent's own** — do not reuse the deep-work / Family Money Story webhook.
 
 `render.yaml` defines a free Node web service with `/api/health` as the health
 check. Set the four env vars in the Render dashboard (they're `sync: false`, i.e.
-not stored in the repo). Nothing is deployed to Render yet.
+not stored in the repo).
+
+**Live at https://ots-teen-agent.onrender.com** (free plan). `ANTHROPIC_API_KEY`
+and `TOKEN_SIGNING_SECRET` are set; `TEEN_MAKE_WEBHOOK_URL` is not yet (step 6), so
+the final "Send to parent" returns a 500 until the Make scenario exists. The model
+layer is **live-validated**: a full real-model interview scored sensibly (all five
+dimensions, high confidence, verbatim quotes; stage "Building"), and the CRISIS
+safety path fired correctly (warm response + `[SAFETY_EVENT:CRISIS]`, no completion).
+Note: the free plan spins down when idle, so the first hit after a quiet spell takes
+~50s and may flash a 502 — consider the $7/mo starter plan for a real pilot.
 
 ## Roadmap
 
