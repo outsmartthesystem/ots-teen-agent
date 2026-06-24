@@ -12,13 +12,23 @@ gate before anything reaches the parent, and the teen agent's **own** Make webho
 
 ## Status
 
-**Foundation + session-token contract — done (this commit).** Deployable baseline:
-the server, the parent→teen handoff, the security/rate-limit plumbing, and the
-endpoint contracts the rest of the app will fill in.
+**Foundation + session-token contract — done.** Deployable baseline: the server,
+the parent→teen handoff, the security/rate-limit plumbing, and the endpoint
+contracts the rest of the app fills in.
 
-Not yet built: the chat.js interview engine (Prompt A turn loop + sentinels), the
-Prompt B scoring call + teen result render, the preview/veto UI, the real
-registration page, and the two Make scenarios. See **Roadmap** below.
+**chat.js interview engine — done.** Runs Prompt A turn-by-turn, catches all four
+sentinels (`[INTERVIEW_COMPLETE]` + the three `[SAFETY_EVENT:*]`), and on completion
+hands the transcript to Prompt B for scoring. Verified end-to-end in a browser
+against a mock model: boot/placeholder substitution, the turn loop, native click +
+Enter, completion → scoring → fence-tolerant JSON parse → result, and the **CRISIS**
+path (halt + resources + suppressed scoring + blocked parent report). The full teen
+result view and the preview/veto gate are stubbed (`renderResultStub`) — that's step 3.
+
+Not yet built: the Prompt B teen result UI + preview/veto, the real registration
+page, the two Make scenarios, and the safety backend. See **Roadmap** below.
+
+Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
+regenerates `prompts.js` (the runtime copy the frontend loads).
 
 ## Run locally
 
@@ -81,10 +91,11 @@ not stored in the repo). Nothing is deployed to Render yet.
 ## Roadmap
 
 1. ✅ Foundation + session-token contract
-2. ⬜ chat.js port — Prompt A turn loop, catch `[INTERVIEW_COMPLETE]` + the three
-   `[SAFETY_EVENT:*]` sentinels, session save/resume, PDF download
-3. ⬜ Prompt B scoring call → parse JSON → render the teen result (5-bar + prose)
-4. ⬜ Preview/veto gate → freeze approved items → `POST /api/parent-report`
+2. ✅ chat.js port — Prompt A turn loop, all four sentinels, session save/resume,
+   completion → Prompt B scoring call → JSON parse (result render stubbed)
+3. ⬜ Teen result UI — render the stage badge, 5-bar chart, and
+   mirror/strength/unlock/seven-day-move/choice prose from the Prompt B output
+4. ⬜ Preview/veto gate → freeze approved items → `POST /api/parent-report` + PDF
 5. ⬜ Real registration page (replaces `dev-register.html`)
 6. ⬜ Two Make scenarios (teen result side + parent report side)
 7. ⬜ **Safety backend** — the launch gate: escalation SOP, who's notified on

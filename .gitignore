@@ -4,3 +4,7 @@ node_modules/
 *.log
 .DS_Store
 desktop.ini
+
+# local verification artifacts — never committed
+mock-server.js
+.claude/
