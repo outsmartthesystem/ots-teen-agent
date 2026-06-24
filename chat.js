@@ -426,6 +426,11 @@ function renderResult(parsed) {
     root.appendChild(wrap);
   }
 
+  // Save-as-PDF keepsake of the result.
+  const pdfBtn = elem('button', 'btn btn-ghost result-pdf', '⤓  Save my result as a PDF');
+  pdfBtn.addEventListener('click', downloadResultPDF);
+  root.appendChild(pdfBtn);
+
   // Bridge to the preview/veto step.
   const parent = window.session.parent_first_name;
   if (window.blockParentReport) {
@@ -632,6 +637,72 @@ function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function scrollResultTop() {
   const s = document.getElementById('screen-result');
   if (s) s.scrollTop = 0;
+}
+
+// ─── RESULT PDF (light-themed keepsake) ──────────────────────────────────
+function downloadResultPDF() {
+  const holder = document.getElementById('pdfHolder');
+  if (!holder) return;
+  holder.innerHTML = buildResultPdfHtml();
+  const node = holder.firstElementChild;
+  const safeName = (window.session.teen_first_name || 'result').replace(/[^a-z0-9]/gi, '') || 'result';
+  if (typeof html2pdf === 'undefined') { window.print(); return; } // CDN blocked → browser print dialog
+  const opt = {
+    margin: 0,
+    filename: 'OTS-Teen-Check-' + safeName + '.pdf',
+    image: { type: 'jpeg', quality: 0.98 },
+    html2canvas: { scale: 2, backgroundColor: '#ffffff' },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['css', 'legacy'] }
+  };
+  const cleanup = () => { holder.innerHTML = ''; };
+  html2pdf().set(opt).from(node).save().then(cleanup, cleanup);
+}
+
+function buildResultPdfHtml() {
+  const t = (window.scoringResult && window.scoringResult.teen_output) || {};
+  const name = escHtml(window.session.teen_first_name);
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const bars = (t.bars || []).map(pdfBar).join('');
+  let h = '<div class="pdf-doc">';
+  h += '<div class="pdf-eyebrow">Outsmart the System &middot; Teen Check</div>';
+  h += '<div class="pdf-name">' + name + '</div>';
+  if (t.stage_display) h += '<span class="pdf-stage">' + escHtml(t.stage_display) + '</span>';
+  if (t.goal_reflected) h += '<p class="pdf-goal">' + escHtml(t.goal_reflected) + '</p>';
+  if (bars) h += '<div class="pdf-bars">' + bars + '</div>';
+  const s = t.demonstrated_strength;
+  if (s && s.text) {
+    h += '<div class="pdf-section"><h3>What you’ve already got</h3><p>' + escHtml(s.text) + '</p>';
+    if (s.evidence_quote) h += '<p class="pdf-quote">“' + escHtml(s.evidence_quote) + '”</p>';
+    h += '</div>';
+  }
+  const u = t.biggest_unlock;
+  if (u && (u.skill || u.framing)) {
+    h += '<div class="pdf-section"><h3>Your biggest unlock' + (u.skill ? ': ' + escHtml(u.skill) : '') + '</h3>';
+    if (u.framing) h += '<p>' + escHtml(u.framing) + '</p>';
+    h += '</div>';
+  }
+  if (t.seven_day_move) h += '<div class="pdf-section pdf-move"><h3>This week</h3><p>' + escHtml(t.seven_day_move) + '</p></div>';
+  h += '<div class="pdf-footer">outsmartthesystem.org &middot; ' + date + '</div>';
+  h += '</div>';
+  return h;
+}
+
+function pdfBar(b) {
+  const label = escHtml(b.dimension);
+  if (b.score == null) {
+    return '<div class="pdf-bar-row"><span class="pdf-bar-label">' + label + '</span>' +
+      '<span style="flex:1;font-size:11px;color:#aaa;">not enough info yet</span>' +
+      '<span class="pdf-bar-score">—</span></div>';
+  }
+  const w = clamp(b.score, 0, 5) / 5 * 100;
+  return '<div class="pdf-bar-row"><span class="pdf-bar-label">' + label + '</span>' +
+    '<span class="pdf-bar-track"><span class="pdf-bar-fill" style="width:' + w + '%"></span></span>' +
+    '<span class="pdf-bar-score">' + b.score + '</span></div>';
+}
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ─── TRANSCRIPT (for scoring) ────────────────────────────────────────────

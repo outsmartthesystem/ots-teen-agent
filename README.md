@@ -139,7 +139,6 @@ parent-report webhook is secret-gated (forged direct POSTs are filtered out), an
 3. ✅ Teen result UI — stage badge, 5-bar chart (null-safe), and
    mirror/strength/unlock/seven-day-move/choice prose from the Prompt B output
 4. ✅ Preview/veto gate → freeze approved + edited items → `POST /api/parent-report`
-   (PDF of the teen result is still a small to-do)
 5. ✅ Registration page (`register.html`) — parent-facing entry; replaces the old
    dev harness
 6. ✅ Make parent-report scenario — webhook → Gmail, live and verified (separate
@@ -155,7 +154,9 @@ parent-report webhook is secret-gated (forged direct POSTs are filtered out), an
 8. ✅ Hardening — `/api/health` excluded from rate limiting (fixes the Render
    health-check 429 flap); parent-report webhook secret-gated via `MAKE_SHARED_SECRET`
    + a Make-side filter (forged direct POSTs are dropped). Both live-verified.
-   *Small remaining nicety:* the teen-result PDF download.
+9. ✅ Custom domain **https://teen.outsmartthesystem.org** (CNAME → Render, TLS
+   issued); bare root redirects to `/register.html`. Plus a one-click teen-result
+   **PDF** download (html2pdf, light-themed keepsake).
 
 The prompts themselves live in `prompts/` once added (Prompt A = interview, Prompt B
 = scoring); both are designed and version-locked at build v4.
