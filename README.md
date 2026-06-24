@@ -38,8 +38,13 @@ confidence summary, and program fit are shown read-only. On approval the report 
 anything" path is included. Verified end-to-end against the mock: a vetoed item is
 excluded, an edited item carries its new text, and the framing always rides along.
 
-Not yet built: the real registration page, the two Make scenarios, and the safety
-backend. See **Roadmap** below.
+**Registration page — done.** `register.html` is the parent-facing entry: it sets
+expectations about the consent model up front (the teen sees their result first and
+curates what's shared), validates the fields, calls `/api/register`, and hands back
+the teen's link with copy-to-clipboard. Verified end-to-end: register → real signed
+token → opening the link boots the interview as the right teen.
+
+Not yet built: the two Make scenarios and the safety backend. See **Roadmap** below.
 
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
 regenerates `prompts.js` (the runtime copy the frontend loads).
@@ -52,9 +57,9 @@ cp .env.example .env        # then fill in the values
 npm start                   # http://localhost:3000
 ```
 
-Mint a token in the browser at `/dev-register.html`, click the generated link, and
-the teen page (`/`) will show the injected values — that round trip proves the
-foundation works. `/api/health` reports which env vars are configured.
+Open `/register.html`, fill in the parent + teen fields, and you get the teen's
+link; opening it boots the interview at `/`. That's the full entry round trip.
+`/api/health` reports which env vars are configured.
 
 > **Drive note:** this repo lives in a Google-Drive-synced folder. `npm install`
 > writes ~70 packages as thousands of tiny files, which the Drive sync layer makes
@@ -111,7 +116,8 @@ not stored in the repo). Nothing is deployed to Render yet.
    mirror/strength/unlock/seven-day-move/choice prose from the Prompt B output
 4. ✅ Preview/veto gate → freeze approved + edited items → `POST /api/parent-report`
    (PDF of the teen result is still a small to-do)
-5. ⬜ Real registration page (replaces `dev-register.html`)
+5. ✅ Registration page (`register.html`) — parent-facing entry; replaces the old
+   dev harness
 6. ⬜ Two Make scenarios (teen result side + parent report side)
 7. ⬜ **Safety backend** — the launch gate: escalation SOP, who's notified on
    CRISIS/ABUSE, region-aware resources, the parent-may-be-unsafe path

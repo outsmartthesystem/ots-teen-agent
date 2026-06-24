@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Outsmart the System — Teen Check · Set up</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c0f14; --panel: #141923; --panel-2: #101620; --line: #232a36;
+      --text: #e8eaed; --muted: #8a93a6; --accent: #2f6df0; --accent-2: #6fb3ff;
+      --good: #6fd3a0; --danger: #ffb4b4;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--bg); color: var(--text); line-height: 1.55;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex; justify-content: center; padding: 32px 16px;
+    }
+    .wrap { width: 100%; max-width: 540px; }
+    .pill { display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--good); background: #102019; border: 1px solid #1d4534; padding: 3px 10px; border-radius: 999px; margin-bottom: 16px; }
+    h1 { font-size: 26px; margin: 0 0 8px; }
+    .lede { color: var(--muted); margin: 0 0 22px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 26px; }
+    .consent { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 16px; margin-bottom: 24px; font-size: 14px; }
+    .consent strong { color: var(--accent-2); }
+    label { display: block; font-size: 13px; color: var(--muted); margin: 16px 0 6px; }
+    input, select {
+      width: 100%; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line);
+      background: var(--panel-2); color: var(--text); font-size: 15px; font-family: inherit;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    .field-error { color: var(--danger); font-size: 12px; margin-top: 5px; display: none; }
+    .field-error.show { display: block; }
+    .btn { width: 100%; margin-top: 24px; padding: 13px; border: none; border-radius: 11px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+    .btn:hover { background: #3b78ff; }
+    .btn:disabled { opacity: .55; cursor: default; }
+    .form-error { color: var(--danger); font-size: 14px; margin-top: 14px; text-align: center; display: none; }
+    .form-error.show { display: block; }
+    .fine { color: var(--muted); font-size: 12px; margin-top: 16px; }
+
+    /* Success state */
+    .success { display: none; }
+    .success.show { display: block; }
+    .success h2 { font-size: 20px; margin: 0 0 6px; }
+    .link-row { display: flex; gap: 8px; margin: 16px 0 8px; }
+    .link-row input { font-size: 13px; color: var(--accent-2); }
+    .copy-btn { white-space: nowrap; padding: 0 16px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent-2); font-weight: 600; cursor: pointer; }
+    .copy-btn:hover { background: #0e1830; }
+    .send-guide { font-size: 14px; color: var(--muted); }
+    .again { display: inline-block; margin-top: 18px; color: var(--accent-2); font-size: 14px; cursor: pointer; text-decoration: underline; background: none; border: none; padding: 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="pill">Outsmart the System</div>
+    <h1>Set up the Teen Check</h1>
+    <p class="lede">A ~15–20 minute guided conversation that helps your teen see where they are with money, what they actually want, and what’s in the way.</p>
+
+    <div class="card">
+      <!-- FORM -->
+      <form id="form" novalidate>
+        <div class="consent">
+          <strong>Your teen drives this.</strong> They do it on their own and see their
+          result first. Before anything reaches you, they preview exactly what’s in it
+          and choose what to share. You’ll get a thoughtful, teen-approved snapshot —
+          not a report card. (If the conversation ever raises a safety concern, it points
+          your teen to real help.)
+        </div>
+
+        <label for="parentName">Your first name</label>
+        <input id="parentName" autocomplete="given-name" maxlength="40">
+        <div class="field-error" id="parentNameErr">Please add your first name.</div>
+
+        <label for="parentEmail">Your email <span style="opacity:.7">— where your teen’s approved report comes</span></label>
+        <input id="parentEmail" type="email" autocomplete="email">
+        <div class="field-error" id="parentEmailErr">Please enter a valid email.</div>
+
+        <label for="teenName">Your teen’s first name</label>
+        <input id="teenName" maxlength="40">
+        <div class="field-error" id="teenNameErr">Please add your teen’s first name.</div>
+
+        <label for="teenAge">Your teen’s age</label>
+        <select id="teenAge">
+          <option value="">Select…</option>
+          <option>13</option><option>14</option><option>15</option>
+          <option>16</option><option>17</option><option>18</option>
+        </select>
+        <div class="field-error" id="teenAgeErr">The Teen Check is built for ages 13–18.</div>
+
+        <button class="btn" id="submitBtn" type="submit">Create my teen’s link</button>
+        <div class="form-error" id="formError"></div>
+        <p class="fine">We use this only to set up the check and deliver the report you approve together.</p>
+      </form>
+
+      <!-- SUCCESS -->
+      <div class="success" id="success">
+        <div class="pill" style="color:var(--good)">Ready</div>
+        <h2 id="successHeading">Here’s your teen’s private link</h2>
+        <p class="send-guide" id="sendGuide">Send this to them — text it, AirDrop it, or open it on their phone. It’s just for them.</p>
+        <div class="link-row">
+          <input id="teenLink" readonly>
+          <button class="copy-btn" id="copyBtn">Copy</button>
+        </div>
+        <p class="fine">The link works for 30 days. The result is your teen’s; you’ll only receive what they choose to share.</p>
+        <button class="again" id="againBtn">Set up another teen</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const form = document.getElementById('form');
+      const success = document.getElementById('success');
+      const submitBtn = document.getElementById('submitBtn');
+      const formError = document.getElementById('formError');
+
+      function showFieldError(id, show) {
+        document.getElementById(id).classList.toggle('show', show);
+      }
+
+      function validEmail(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        formError.classList.remove('show');
+
+        const parentName = document.getElementById('parentName').value.trim();
+        const parentEmail = document.getElementById('parentEmail').value.trim();
+        const teenName = document.getElementById('teenName').value.trim();
+        const teenAge = Number(document.getElementById('teenAge').value);
+
+        const checks = {
+          parentNameErr: !parentName,
+          parentEmailErr: !validEmail(parentEmail),
+          teenNameErr: !teenName,
+          teenAgeErr: !(teenAge >= 13 && teenAge <= 18)
+        };
+        let ok = true;
+        Object.keys(checks).forEach(id => { showFieldError(id, checks[id]); if (checks[id]) ok = false; });
+        if (!ok) return;
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating…';
+
+        try {
+          const r = await fetch('/api/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              parent_first_name: parentName,
+              parent_email: parentEmail,
+              teen_first_name: teenName,
+              teen_age: teenAge
+            })
+          });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+
+          document.getElementById('teenLink').value = j.teen_url;
+          document.getElementById('successHeading').textContent = "Here's " + teenName + "'s private link";
+          document.getElementById('sendGuide').textContent =
+            'Send this to ' + teenName + ' — text it, AirDrop it, or open it on their phone. It’s just for them.';
+          form.style.display = 'none';
+          success.classList.add('show');
+        } catch (err) {
+          formError.textContent = err.message;
+          formError.classList.add('show');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Create my teen’s link';
+        }
+      });
+
+      document.getElementById('copyBtn').addEventListener('click', function () {
+        const input = document.getElementById('teenLink');
+        input.select();
+        const btn = this;
+        const done = () => { btn.textContent = 'Copied ✓'; setTimeout(() => btn.textContent = 'Copy', 1800); };
+        if (navigator.clipboard) navigator.clipboard.writeText(input.value).then(done, () => { document.execCommand('copy'); done(); });
+        else { document.execCommand('copy'); done(); }
+      });
+
+      document.getElementById('againBtn').addEventListener('click', function () {
+        form.reset();
+        form.style.display = '';
+        success.classList.remove('show');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create my teen’s link';
+        ['parentNameErr', 'parentEmailErr', 'teenNameErr', 'teenAgeErr'].forEach(id => showFieldError(id, false));
+      });
+    })();
+  </script>
+</body>
+</html>
