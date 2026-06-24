@@ -105,24 +105,31 @@ the session.
 
 ## Environment
 
-See `.env.example`. Required for full function: `ANTHROPIC_API_KEY`,
-`TOKEN_SIGNING_SECRET`, `TEEN_MAKE_WEBHOOK_URL`. The Make webhook **must be the teen
-agent's own** — do not reuse the deep-work / Family Money Story webhook.
+See `.env.example`. Full var list:
+
+| Var | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | powers `/api/chat` (interview + scoring) |
+| `TOKEN_SIGNING_SECRET` | signs/verifies session tokens |
+| `TEEN_MAKE_WEBHOOK_URL` | the teen agent's **own** Make webhook for the parent report — do **not** reuse the deep-work / Family Money Story webhook |
+| `MAKE_SHARED_SECRET` | sent as `auth` in the parent-report body; the Make scenario filters on it so the webhook isn't an open email relay |
+| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts |
+| `SAFETY_ALERT_TO` | where CRISIS/ABUSE alerts go (defaults to `EMAIL_USER`) |
+| `PUBLIC_BASE_URL` | optional; base for the teen link (else derived from request host) |
 
 ## Deploy (Render)
 
-`render.yaml` defines a free Node web service with `/api/health` as the health
-check. Set the four env vars in the Render dashboard (they're `sync: false`, i.e.
-not stored in the repo).
+`render.yaml` defines the Node web service with `/api/health` as the health check.
+Set the env vars in the Render dashboard (they're `sync: false`, i.e. not stored in
+the repo).
 
-**Live at https://ots-teen-agent.onrender.com** (free plan). `ANTHROPIC_API_KEY`
-and `TOKEN_SIGNING_SECRET` are set; `TEEN_MAKE_WEBHOOK_URL` is not yet (step 6), so
-the final "Send to parent" returns a 500 until the Make scenario exists. The model
-layer is **live-validated**: a full real-model interview scored sensibly (all five
-dimensions, high confidence, verbatim quotes; stage "Building"), and the CRISIS
-safety path fired correctly (warm response + `[SAFETY_EVENT:CRISIS]`, no completion).
-Note: the free plan spins down when idle, so the first hit after a quiet spell takes
-~50s and may flash a 502 — consider the $7/mo starter plan for a real pilot.
+**Live at https://ots-teen-agent.onrender.com** (starter plan — no idle spin-down).
+The full pipeline is production-verified end to end: register → interview → scored
+result → preview/veto → teen-approved parent email. The model layer is live-validated
+(a real interview scored sensibly across all five dimensions; the CRISIS **and** ABUSE
+paths fire correctly and email a responder alert with no teen quotes). The
+parent-report webhook is secret-gated (forged direct POSTs are filtered out), and
+`/api/health` is excluded from rate limiting so Render's probe can't flap the instance.
 
 ## Roadmap
 
@@ -137,18 +144,18 @@ Note: the free plan spins down when idle, so the first hit after a quiet spell t
    dev harness
 6. ✅ Make parent-report scenario — webhook → Gmail, live and verified (separate
    from the parent Family Money Story scenario)
-7. 🟡 **Safety backend** — routing built: server-side sentinel detection in
-   `/api/chat` (tamper-resistant) + `/api/safety-event`, deduped through
-   `fireSafetyAlert`. CRISIS/ABUSE are **emailed directly** (nodemailer + a Gmail
-   app password — not via Make, so the critical path has no no-code dependency);
-   the alert never goes to the parent, ABUSE carries a do-not-contact banner,
-   no teen quotes are included, and SUPPORT/DISTRESS are logged only. SOP in
-   `docs/SAFETY-SOP.md`. **Still required before public launch:** set `EMAIL_USER`
-   / `EMAIL_PASS` (+ optional `SAFETY_ALERT_TO`) in Render, and the **[NEEDS
-   COUNSEL]** items (mandatory-reporting, post-CRISIS parent contact).
-8. ⬜ Hardening: the Make webhook is currently unauthenticated (matches the
-   existing deep-work posture) — add a shared-secret header before a wide launch
-   so a leaked URL can't relay email. Plus the teen-result PDF.
+7. ✅ **Safety backend** — server-side sentinel detection in `/api/chat`
+   (tamper-resistant) + `/api/safety-event`, deduped through `fireSafetyAlert`.
+   CRISIS/ABUSE are **emailed directly** (nodemailer + Gmail app password — not via
+   Make, so the critical path has no no-code dependency); the alert never goes to
+   the parent, ABUSE carries a do-not-contact banner, no teen quotes are included,
+   SUPPORT/DISTRESS are logged only. Live-verified (both flags emailed cleanly).
+   SOP in `docs/SAFETY-SOP.md`. **Before public launch:** the **[NEEDS COUNSEL]**
+   items (mandatory-reporting, post-CRISIS parent contact).
+8. ✅ Hardening — `/api/health` excluded from rate limiting (fixes the Render
+   health-check 429 flap); parent-report webhook secret-gated via `MAKE_SHARED_SECRET`
+   + a Make-side filter (forged direct POSTs are dropped). Both live-verified.
+   *Small remaining nicety:* the teen-result PDF download.
 
 The prompts themselves live in `prompts/` once added (Prompt A = interview, Prompt B
 = scoring); both are designed and version-locked at build v4.
