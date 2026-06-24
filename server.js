@@ -160,6 +160,68 @@ app.get('/api/session', (req, res) => {
 // Fires only after the teen approves the preview. Destination is taken from the
 // SIGNED token, never the client body. Forwards to the teen agent's OWN Make
 // webhook (NOT the parent Family Money Story / deep-work webhook).
+// Build the parent-facing email from the FROZEN, teen-approved report. The
+// teen's browser sends only the approved + edited items; the server templates
+// them into the email so the wording lives in version-controlled code, not the
+// browser. This is templating already-approved content — not a re-score.
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+const REPORT_CATEGORY_LABEL = {
+  what_matters: 'What matters to them',
+  strength: 'A strength',
+  growth_area: 'A growth area',
+  environmental: 'Context worth knowing'
+};
+function buildParentEmail(report, teenName, parentName) {
+  const items = Array.isArray(report.shareable_items) ? report.shareable_items : [];
+  const ff = report.fixed_framing || {};
+  const pf = report.program_fit || {};
+  let h = '';
+  h += `<p>Hi ${escHtml(parentName)},</p>`;
+  h += `<p>${escHtml(teenName)} just completed the Outsmart the System Teen Check. They saw their own result first and chose what to share with you — here it is.</p>`;
+  if (ff.limitation) h += `<p style="font-size:13px;color:#555;background:#f5f6f8;padding:11px 14px;border-radius:8px;margin:16px 0">${escHtml(ff.limitation)}</p>`;
+  items.forEach(it => {
+    h += `<div style="margin:14px 0;padding:12px 16px;border-left:3px solid #2f6df0;background:#f6f9ff;border-radius:0 8px 8px 0">`;
+    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#8a93a6;margin-bottom:5px">${escHtml(REPORT_CATEGORY_LABEL[it.category] || 'Shared')}</div>`;
+    h += `<div>${escHtml(it.text)}</div>`;
+    if (it.evidence_quote) h += `<div style="margin-top:7px;font-style:italic;color:#555">&ldquo;${escHtml(it.evidence_quote)}&rdquo;</div>`;
+    h += `</div>`;
+  });
+  if (report.confidence_summary) h += `<p style="color:#444;margin:18px 0">${escHtml(report.confidence_summary)}</p>`;
+  if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
+    h += `<p style="font-weight:600;margin:18px 0 6px">A few things to keep in mind:</p><ul style="color:#444;margin:0;padding-left:20px">`;
+    ff.what_not_to_do.forEach(x => h += `<li style="margin-bottom:4px">${escHtml(x)}</li>`);
+    h += `</ul>`;
+  }
+  if (pf.text) {
+    h += `<div style="margin:20px 0;padding:13px 16px;background:#f0fbf5;border:1px solid #cdeede;border-radius:10px">`;
+    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#3a9b6e;margin-bottom:5px">If it&rsquo;s useful</div>`;
+    h += `<div style="color:#333">${escHtml(pf.text)}</div></div>`;
+  }
+  h += `<p style="font-size:12px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:12px">Outsmart the System &middot; outsmartthesystem.org<br>This snapshot was approved by ${escHtml(teenName)} before it was sent.</p>`;
+  const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.55;font-size:15px">${h}</div>`;
+
+  let t = `Hi ${parentName},\n\n${teenName} just completed the Outsmart the System Teen Check. They saw their own result first and chose what to share with you.\n\n`;
+  if (ff.limitation) t += ff.limitation + '\n\n';
+  items.forEach(it => {
+    t += (REPORT_CATEGORY_LABEL[it.category] || 'Shared').toUpperCase() + '\n' + it.text + '\n';
+    if (it.evidence_quote) t += '"' + it.evidence_quote + '"\n';
+    t += '\n';
+  });
+  if (report.confidence_summary) t += report.confidence_summary + '\n\n';
+  if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
+    t += 'A few things to keep in mind:\n';
+    ff.what_not_to_do.forEach(x => t += '- ' + x + '\n');
+    t += '\n';
+  }
+  if (pf.text) t += pf.text + '\n\n';
+  t += 'Outsmart the System — outsmartthesystem.org\nApproved by ' + teenName + ' before sending.';
+
+  return { subject: `${teenName}'s Teen Check — what they chose to share`, html, text: t };
+}
+
 app.post('/api/parent-report', async (req, res) => {
   const payload = verifyToken(req.body && req.body.t);
   if (!payload) return res.status(401).json({ error: 'invalid or expired token' });
@@ -168,13 +230,17 @@ app.post('/api/parent-report', async (req, res) => {
   const approved = req.body && req.body.approved_report;
   if (!approved || typeof approved !== 'object') return res.status(400).json({ error: 'approved_report required' });
 
+  const email = buildParentEmail(approved, payload.teen_first_name, payload.parent_first_name);
   const out = {
     sid: payload.sid,
     parent_email: payload.parent_email,       // from the signed token only
     parent_first_name: payload.parent_first_name,
     teen_first_name: payload.teen_first_name,
     teen_age: payload.teen_age,
-    approved_report: approved,
+    email_subject: email.subject,             // pre-rendered so Make just delivers
+    email_html: email.html,
+    email_text: email.text,
+    approved_report: approved,                // structured copy too, for logging
     sent_at: new Date().toISOString()
   };
   try {

@@ -44,7 +44,15 @@ curates what's shared), validates the fields, calls `/api/register`, and hands b
 the teen's link with copy-to-clipboard. Verified end-to-end: register → real signed
 token → opening the link boots the interview as the right teen.
 
-Not yet built: the two Make scenarios and the safety backend. See **Roadmap** below.
+**Parent-report delivery — done.** `/api/parent-report` pre-renders the parent email
+(subject + HTML) from the frozen approved items, so Make just delivers it. The teen
+agent's **own** Make scenario ("OTS Teen Agent — Parent Report", a webhook → Gmail
+flow separate from the parent Family Money Story scenario) is live. Verified end-to-
+end: a real approved report rendered an email and arrived in the parent inbox. The
+webhook URL is server-side only (the browser never sees it) — set it as
+`TEEN_MAKE_WEBHOOK_URL` in Render.
+
+Not yet built: the safety backend. See **Roadmap** below.
 
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
 regenerates `prompts.js` (the runtime copy the frontend loads).
@@ -127,9 +135,13 @@ Note: the free plan spins down when idle, so the first hit after a quiet spell t
    (PDF of the teen result is still a small to-do)
 5. ✅ Registration page (`register.html`) — parent-facing entry; replaces the old
    dev harness
-6. ⬜ Two Make scenarios (teen result side + parent report side)
+6. ✅ Make parent-report scenario — webhook → Gmail, live and verified (separate
+   from the parent Family Money Story scenario)
 7. ⬜ **Safety backend** — the launch gate: escalation SOP, who's notified on
    CRISIS/ABUSE, region-aware resources, the parent-may-be-unsafe path
+8. ⬜ Hardening: the Make webhook is currently unauthenticated (matches the
+   existing deep-work posture) — add a shared-secret header before a wide launch
+   so a leaked URL can't relay email. Plus the teen-result PDF.
 
 The prompts themselves live in `prompts/` once added (Prompt A = interview, Prompt B
 = scoring); both are designed and version-locked at build v4.
