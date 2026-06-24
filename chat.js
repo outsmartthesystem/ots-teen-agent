@@ -41,7 +41,10 @@ document.addEventListener('DOMContentLoaded', boot);
 async function boot() {
   const token = new URLSearchParams(location.search).get('t');
   if (!token) {
-    return showError("This link is missing its access code. Ask whoever set this up to send you the full link — it should end with <code>/?t=…</code>");
+    // No token means someone hit the bare domain (not a teen's link). Send them
+    // to the parent registration page rather than a dead-end error.
+    location.replace('/register.html');
+    return;
   }
   window.rawToken = token;
 
