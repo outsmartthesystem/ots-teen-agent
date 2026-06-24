@@ -2,6 +2,15 @@ const express = require('express');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
 const path = require('path');
+const nodemailer = require('nodemailer');
+
+// Direct mail transport for SAFETY alerts only (not the parent report, which
+// goes via Make). Safety is critical enough that it shouldn't depend on a
+// no-code tool's plan/uptime. Configured iff EMAIL_USER + EMAIL_PASS are set
+// (a Gmail address + app password, same approach as ots-deep-work).
+const safetyMailer = (process.env.EMAIL_USER && process.env.EMAIL_PASS)
+  ? nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } })
+  : null;
 
 const app = express();
 app.set('trust proxy', 1); // Render terminates TLS at a proxy; needed for real client IPs.
@@ -319,29 +328,17 @@ async function fireSafetyAlert(flag, info) {
   console.warn('[SAFETY_EVENT]', flag, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
 
   if (!SAFETY_EMAIL_FLAGS.has(flag)) return; // SUPPORT/DISTRESS: recorded, not emailed
-  const webhook = process.env.SAFETY_WEBHOOK_URL;
-  if (!webhook) {
-    console.error('SAFETY_WEBHOOK_URL not set — a', flag, 'alert was NOT delivered.');
+  if (!safetyMailer) {
+    console.error('Safety email not configured (EMAIL_USER/EMAIL_PASS) — a', flag, 'alert was NOT delivered.');
     return;
   }
   const email = buildSafetyEmail(flag, info);
-  const alert = {
-    flag,
-    severity: 'high',
-    teen_first_name: info.teen_first_name,
-    teen_age: info.teen_age,
-    sid: info.sid,
-    do_not_contact_parent: flag === 'ABUSE',
-    detected_at: new Date().toISOString(),
-    email_subject: email.subject,   // pre-rendered so Make just delivers to the responder
-    email_html: email.html,
-    note: 'OTS Teen Check safety flag. No teen disclosure content is included, by policy. Follow the safety SOP. This must never be forwarded to the parent.'
-  };
+  const to = process.env.SAFETY_ALERT_TO || process.env.EMAIL_USER;
   try {
-    const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(alert) });
-    if (!r.ok) console.error('Safety webhook non-OK:', r.status);
+    await safetyMailer.sendMail({ from: process.env.EMAIL_USER, to, subject: email.subject, html: email.html });
+    console.warn('[SAFETY_ALERT_SENT]', flag, '→', to, '| sid=' + info.sid);
   } catch (err) {
-    console.error('Safety webhook error:', err.message);
+    console.error('Safety email send error:', err.message);
   }
 }
 
@@ -419,7 +416,7 @@ app.get('/api/health', (req, res) => {
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       token_secret: !!process.env.TOKEN_SIGNING_SECRET,
       teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
-      safety_webhook: !!process.env.SAFETY_WEBHOOK_URL
+      safety_email: !!safetyMailer
     }
   });
 });

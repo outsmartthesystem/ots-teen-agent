@@ -139,11 +139,13 @@ Note: the free plan spins down when idle, so the first hit after a quiet spell t
    from the parent Family Money Story scenario)
 7. 🟡 **Safety backend** — routing built: server-side sentinel detection in
    `/api/chat` (tamper-resistant) + `/api/safety-event`, deduped through
-   `fireSafetyAlert` → a separate Make scenario emails the responder (never the
-   parent; ABUSE carries a do-not-contact banner; no teen quotes; SUPPORT logged
-   only). SOP drafted in `docs/SAFETY-SOP.md`. **Still required before public
-   launch:** activate the Make safety scenario + set `SAFETY_WEBHOOK_URL`, and the
-   **[NEEDS COUNSEL]** items (mandatory-reporting, post-CRISIS parent contact).
+   `fireSafetyAlert`. CRISIS/ABUSE are **emailed directly** (nodemailer + a Gmail
+   app password — not via Make, so the critical path has no no-code dependency);
+   the alert never goes to the parent, ABUSE carries a do-not-contact banner,
+   no teen quotes are included, and SUPPORT/DISTRESS are logged only. SOP in
+   `docs/SAFETY-SOP.md`. **Still required before public launch:** set `EMAIL_USER`
+   / `EMAIL_PASS` (+ optional `SAFETY_ALERT_TO`) in Render, and the **[NEEDS
+   COUNSEL]** items (mandatory-reporting, post-CRISIS parent contact).
 8. ⬜ Hardening: the Make webhook is currently unauthenticated (matches the
    existing deep-work posture) — add a shared-secret header before a wide launch
    so a leaked URL can't relay email. Plus the teen-result PDF.
