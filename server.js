@@ -260,10 +260,106 @@ app.post('/api/parent-report', async (req, res) => {
   }
 });
 
+// ============================================================================
+// SAFETY EVENT ROUTING  (step 7)
+// ============================================================================
+// When a [SAFETY_EVENT:*] fires, get a designated human aware — WITHOUT routing
+// anything toward the parent and WITHOUT storing the teen's disclosure.
+//
+// Two detection paths, one funnel (deduped per session+flag so they can't
+// double-alert):
+//   1. Server-side: /api/chat scans the model's reply for the sentinel
+//      (tamper-resistant — fires even if the browser is modified).
+//   2. Client-side: /api/safety-event, for the Prompt B STEP-0 safety result
+//      (which lives inside JSON, not a sentinel) and as redundancy.
+//
+// Severity: CRISIS and ABUSE email the responder immediately. SUPPORT/DISTRESS
+// are recorded only (no email) so alert fatigue can't bury a real CRISIS.
+// The alert carries NO quotes from the teen — only flag, first name, age, sid.
+// ABUSE alerts are stamped do_not_contact_parent: the parent may be the threat.
+const SAFETY_FLAGS = new Set(['CRISIS', 'ABUSE', 'SUPPORT', 'DISTRESS']);
+const SAFETY_EMAIL_FLAGS = new Set(['CRISIS', 'ABUSE']);
+const alertedEvents = new Set(); // dedup keys: `${sid}:${flag}`
+
+// Pre-render the responder alert email. Contains NO teen disclosure — only the
+// flag, first name, age, session id. ABUSE carries a do-not-contact-parent banner.
+function buildSafetyEmail(flag, info) {
+  const name = escHtml(info.teen_first_name || 'a teen');
+  const age = escHtml(info.teen_age);
+  const subject = `⚠️ OTS Teen Check — ${flag} flag — ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
+  let h = '';
+  h += `<div style="background:${flag === 'ABUSE' ? '#7a1f1f' : '#8a4b00'};color:#fff;padding:12px 16px;border-radius:10px 10px 0 0;font-weight:700;font-size:16px">Safety flag: ${escHtml(flag)}</div>`;
+  h += `<div style="border:1px solid #e2e2e2;border-top:none;border-radius:0 0 10px 10px;padding:16px">`;
+  h += `<p>A teen using the Teen Check just triggered a <b>${escHtml(flag)}</b> safety flag.</p>`;
+  if (flag === 'ABUSE') {
+    h += `<p style="background:#fdecec;border:1px solid #f5b5b5;color:#7a1f1f;padding:11px 14px;border-radius:8px;font-weight:600">⚠️ Do NOT contact the parent. The parent who set this up may be the concern. Follow the ABUSE branch of the SOP.</p>`;
+  }
+  h += `<table style="border-collapse:collapse;margin:12px 0;font-size:14px"><tbody>`;
+  h += `<tr><td style="color:#777;padding:3px 14px 3px 0">Teen</td><td><b>${name}</b>, age ${age}</td></tr>`;
+  h += `<tr><td style="color:#777;padding:3px 14px 3px 0">Session</td><td>${escHtml(info.sid)}</td></tr>`;
+  h += `<tr><td style="color:#777;padding:3px 14px 3px 0">Detected</td><td>${escHtml(new Date().toISOString())}</td></tr>`;
+  h += `</tbody></table>`;
+  h += `<p style="color:#555;font-size:13px">This alert contains <b>no quotes</b> from the teen, by policy. The teen has already been shown crisis resources (988/911) in the conversation, and no report will go to the parent for this session.</p>`;
+  h += `<p style="font-weight:600;margin:14px 0 4px">What to do now</p>`;
+  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Teen Check Safety SOP. OTS's role is to connect the teen to real help, not to counsel. Never forward this to the parent.</p>`;
+  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Teen Check safety routing</p>`;
+  h += `</div>`;
+  const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.5;font-size:15px">${h}</div>`;
+  return { subject, html };
+}
+
+async function fireSafetyAlert(flag, info) {
+  flag = String(flag || '').toUpperCase();
+  if (!SAFETY_FLAGS.has(flag)) return;
+  const key = (info.sid || '?') + ':' + flag;
+  if (alertedEvents.has(key)) return;
+  alertedEvents.add(key);
+  if (alertedEvents.size > 10000) alertedEvents.clear(); // bound memory
+
+  console.warn('[SAFETY_EVENT]', flag, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
+
+  if (!SAFETY_EMAIL_FLAGS.has(flag)) return; // SUPPORT/DISTRESS: recorded, not emailed
+  const webhook = process.env.SAFETY_WEBHOOK_URL;
+  if (!webhook) {
+    console.error('SAFETY_WEBHOOK_URL not set — a', flag, 'alert was NOT delivered.');
+    return;
+  }
+  const email = buildSafetyEmail(flag, info);
+  const alert = {
+    flag,
+    severity: 'high',
+    teen_first_name: info.teen_first_name,
+    teen_age: info.teen_age,
+    sid: info.sid,
+    do_not_contact_parent: flag === 'ABUSE',
+    detected_at: new Date().toISOString(),
+    email_subject: email.subject,   // pre-rendered so Make just delivers to the responder
+    email_html: email.html,
+    note: 'OTS Teen Check safety flag. No teen disclosure content is included, by policy. Follow the safety SOP. This must never be forwarded to the parent.'
+  };
+  try {
+    const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(alert) });
+    if (!r.ok) console.error('Safety webhook non-OK:', r.status);
+  } catch (err) {
+    console.error('Safety webhook error:', err.message);
+  }
+}
+
+// Client-reported safety event (token-gated). Acks regardless so the client
+// never learns whether/how an alert was routed.
+app.post('/api/safety-event', (req, res) => {
+  const payload = verifyToken(req.body && req.body.t);
+  if (!payload) return res.status(401).json({ error: 'invalid or expired token' });
+  const flag = String(req.body && req.body.flag || '').toUpperCase();
+  if (!SAFETY_FLAGS.has(flag)) return res.status(400).json({ error: 'invalid flag' });
+  fireSafetyAlert(flag, { sid: payload.sid, teen_first_name: payload.teen_first_name, teen_age: payload.teen_age });
+  res.json({ ok: true });
+});
+
 // ─── ANTHROPIC CHAT (Prompt A turns AND the Prompt B scoring call) ─────────
 // Model-agnostic proxy. The frontend supplies system/messages/max_tokens and a
-// whitelisted model. One endpoint serves both the interview and the scoring
-// call — they differ only by system prompt and token budget.
+// whitelisted model, plus the session token `t` (used only for server-side
+// safety attribution — it is NOT forwarded to Anthropic).
 const ALLOWED_MODELS = new Set([
   'claude-sonnet-4-6',
   'claude-opus-4-8',
@@ -275,9 +371,13 @@ app.post('/api/chat', async (req, res) => {
     return res.status(500).json({ error: 'Server not configured: ANTHROPIC_API_KEY missing' });
   }
   try {
-    const body = { ...req.body };
-    body.model = ALLOWED_MODELS.has(body.model) ? body.model : 'claude-sonnet-4-6';
-    body.max_tokens = Math.min(Number(body.max_tokens) || 1200, 8000);
+    // Forward ONLY the Anthropic fields — never pass `t` or other extras upstream.
+    const body = {
+      model: ALLOWED_MODELS.has(req.body.model) ? req.body.model : 'claude-sonnet-4-6',
+      max_tokens: Math.min(Number(req.body.max_tokens) || 1200, 8000),
+      system: req.body.system,
+      messages: req.body.messages
+    };
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -291,6 +391,18 @@ app.post('/api/chat', async (req, res) => {
     const data = await response.json();
     console.log('Model:', body.model, '| Status:', response.status);
     if (!response.ok) return res.status(response.status).json(data);
+
+    // Server-side safety detection (tamper-resistant). Attribute via the signed
+    // token. Fire-and-forget so the teen's turn isn't delayed.
+    try {
+      const text = (data.content && data.content[0] && data.content[0].text) || '';
+      const m = text.match(/\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/);
+      if (m) {
+        const p = verifyToken(req.body && req.body.t);
+        if (p) fireSafetyAlert(m[1], { sid: p.sid, teen_first_name: p.teen_first_name, teen_age: p.teen_age });
+      }
+    } catch (e) { console.error('safety scan error:', e.message); }
+
     res.json(data);
   } catch (err) {
     console.error('Chat error:', err.message);
@@ -306,7 +418,8 @@ app.get('/api/health', (req, res) => {
     configured: {
       anthropic: !!process.env.ANTHROPIC_API_KEY,
       token_secret: !!process.env.TOKEN_SIGNING_SECRET,
-      teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL
+      teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
+      safety_webhook: !!process.env.SAFETY_WEBHOOK_URL
     }
   });
 });

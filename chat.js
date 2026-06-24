@@ -176,7 +176,8 @@ async function getAssistantTurn() {
           model: MODEL_INTERVIEW,
           max_tokens: 1200,
           system,
-          messages: getApiMessages()
+          messages: getApiMessages(),
+          t: window.rawToken // server-side safety attribution only; not forwarded to the model
         })
       });
       data = await response.json();
@@ -265,9 +266,18 @@ function handleSafety(flag) {
 }
 
 function reportSafetyEvent(flag) {
-  // TODO (step 7 — safety backend): route to the human-escalation SOP.
-  // Deliberately no parent-facing notification here.
-  console.warn('[SAFETY_EVENT]', flag, '— backend routing not yet wired (step 7).');
+  // Best-effort report to the server's safety routing (token-gated). The server
+  // also detects sentinels itself and dedupes, so this is redundancy + the path
+  // for the Prompt B STEP-0 result (which is JSON, not a sentinel). Never routes
+  // anything toward the parent.
+  console.warn('[SAFETY_EVENT]', flag);
+  try {
+    fetch('/api/safety-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ t: window.rawToken, flag: flag })
+    }).catch(() => {});
+  } catch (e) { /* never let reporting break the safety UX */ }
 }
 
 // ─── COMPLETION → SCORING (Prompt B) ─────────────────────────────────────
@@ -295,7 +305,8 @@ async function runScoring() {
         model: MODEL_SCORING,
         max_tokens: 4000,
         system,
-        messages: [{ role: 'user', content: transcript }]
+        messages: [{ role: 'user', content: transcript }],
+        t: window.rawToken
       })
     });
     const data = await response.json();
@@ -309,6 +320,7 @@ async function runScoring() {
     // Scoring has its own STEP 0 safety pass — honor it.
     if (parsed.safety_check && parsed.safety_check.clear === false) {
       window.blockParentReport = true;
+      reportSafetyEvent(parsed.safety_check.flag || 'DISTRESS'); // route the Prompt B safety result
       showResources(parsed.safety_check.flag || 'SUPPORT');
       addStatus('Thanks for being honest with me. There’s no scored result here — what you shared matters more than that.');
       return;

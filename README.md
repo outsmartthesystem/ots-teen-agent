@@ -137,8 +137,13 @@ Note: the free plan spins down when idle, so the first hit after a quiet spell t
    dev harness
 6. ✅ Make parent-report scenario — webhook → Gmail, live and verified (separate
    from the parent Family Money Story scenario)
-7. ⬜ **Safety backend** — the launch gate: escalation SOP, who's notified on
-   CRISIS/ABUSE, region-aware resources, the parent-may-be-unsafe path
+7. 🟡 **Safety backend** — routing built: server-side sentinel detection in
+   `/api/chat` (tamper-resistant) + `/api/safety-event`, deduped through
+   `fireSafetyAlert` → a separate Make scenario emails the responder (never the
+   parent; ABUSE carries a do-not-contact banner; no teen quotes; SUPPORT logged
+   only). SOP drafted in `docs/SAFETY-SOP.md`. **Still required before public
+   launch:** activate the Make safety scenario + set `SAFETY_WEBHOOK_URL`, and the
+   **[NEEDS COUNSEL]** items (mandatory-reporting, post-CRISIS parent contact).
 8. ⬜ Hardening: the Make webhook is currently unauthenticated (matches the
    existing deep-work posture) — add a shared-secret header before a wide launch
    so a leaked URL can't relay email. Plus the teen-result PDF.
