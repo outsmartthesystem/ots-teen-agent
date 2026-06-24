@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>DEV — mint a teen session token</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0c0f14; color: #e8eaed; padding: 24px; }
+    .card { max-width: 460px; width: 100%; background: #141923; border: 1px solid #232a36; border-radius: 16px; padding: 28px; }
+    .warn { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: #f0c674; background: #221b0e; border: 1px solid #4a3a16; padding: 3px 9px; border-radius: 999px; display: inline-block; margin-bottom: 16px; }
+    h1 { font-size: 19px; margin: 0 0 18px; }
+    label { display: block; font-size: 13px; color: #8a93a6; margin: 12px 0 5px; }
+    input { width: 100%; padding: 10px 12px; border-radius: 9px; border: 1px solid #2a3340; background: #0a0d12; color: #e8eaed; font-size: 15px; }
+    button { width: 100%; margin-top: 20px; padding: 12px; border: none; border-radius: 10px; background: #2f6df0; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
+    button:hover { background: #3b78ff; }
+    .out { margin-top: 18px; font-size: 13px; word-break: break-all; }
+    .out a { color: #6fb3ff; }
+    .err { color: #ffb4b4; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="warn">Dev harness — not the real registration page</span>
+    <h1>Mint a teen session token</h1>
+    <label>Teen first name</label>
+    <input id="tName" value="Maya">
+    <label>Teen age (13–18)</label>
+    <input id="tAge" type="number" value="15" min="13" max="18">
+    <label>Parent first name</label>
+    <input id="pName" value="Dana">
+    <label>Parent email</label>
+    <input id="pEmail" type="email" value="dana@example.com">
+    <button id="go">Generate teen link</button>
+    <div class="out" id="out"></div>
+  </div>
+
+  <script>
+    document.getElementById('go').addEventListener('click', function () {
+      const out = document.getElementById('out');
+      out.textContent = 'Working…';
+      fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teen_first_name: document.getElementById('tName').value,
+          teen_age: Number(document.getElementById('tAge').value),
+          parent_first_name: document.getElementById('pName').value,
+          parent_email: document.getElementById('pEmail').value
+        })
+      })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { out.innerHTML = '<span class="err">' + (res.j.error || 'Error') + '</span>'; return; }
+        out.innerHTML = 'Teen link:<br><a href="' + res.j.teen_url + '">' + res.j.teen_url + '</a>';
+      })
+      .catch(function (e) { out.innerHTML = '<span class="err">' + e.message + '</span>'; });
+    });
+  </script>
+</body>
+</html>
