@@ -44,7 +44,7 @@ const rateBuckets = new Map();
 function isRateLimited(ip) {
   const now = Date.now();
   const WINDOW_MS = 5 * 60 * 1000;
-  const MAX_REQUESTS = 30;
+  const MAX_REQUESTS = 60;
   const hits = (rateBuckets.get(ip) || []).filter(t => now - t < WINDOW_MS);
   if (hits.length >= MAX_REQUESTS) {
     rateBuckets.set(ip, hits);
@@ -61,6 +61,10 @@ function isRateLimited(ip) {
 }
 
 app.use('/api/', (req, res, next) => {
+  // Never rate-limit the health check. Render probes /api/health every few
+  // seconds; a 429 there fails the check and flaps the instance
+  // (unhealthy → recover loop). Health is infrastructure, not user traffic.
+  if ((req.originalUrl || '').split('?')[0] === '/api/health') return next();
   if (isRateLimited(req.ip)) {
     // Shaped like Anthropic's rate-limit error so client-side retry/backoff
     // handles it gracefully.
@@ -241,6 +245,10 @@ app.post('/api/parent-report', async (req, res) => {
 
   const email = buildParentEmail(approved, payload.teen_first_name, payload.parent_first_name);
   const out = {
+    // Shared secret the Make scenario filters on, so the webhook can't be used
+    // as an open email relay by anyone who learns the URL. Set MAKE_SHARED_SECRET
+    // in Render to the same value the Make filter checks.
+    auth: process.env.MAKE_SHARED_SECRET || '',
     sid: payload.sid,
     parent_email: payload.parent_email,       // from the signed token only
     parent_first_name: payload.parent_first_name,
