@@ -36,9 +36,14 @@
     /* Chat layout */
     #screen-chat { padding: 0; align-items: stretch; }
     .chat-wrap { width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
-    .chat-header { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
-    .chat-header .dot-logo { width: 9px; height: 9px; border-radius: 50%; background: var(--good); }
+    .chat-header { padding: 13px 20px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 9px; }
+    .chat-header-top { display: flex; align-items: center; gap: 10px; }
+    .chat-header .dot-logo { width: 9px; height: 9px; border-radius: 50%; background: var(--good); flex: none; }
     .chat-header h1 { font-size: 16px; margin: 0; }
+    .chat-progress { display: flex; align-items: center; gap: 10px; }
+    .cp-track { flex: 1; height: 6px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
+    .cp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 999px; transition: width .45s ease; }
+    .cp-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
     .messages-area { flex: 1; overflow-y: auto; padding: 20px; }
     #messages { display: flex; flex-direction: column; gap: 14px; }
     .message { max-width: 86%; padding: 12px 15px; border-radius: 14px; white-space: normal; animation: fadeUp .35s ease forwards; opacity: 0; }
@@ -209,8 +214,14 @@
   <div class="screen" id="screen-chat">
     <div class="chat-wrap">
       <div class="chat-header">
-        <span class="dot-logo"></span>
-        <h1 id="chatHeading">Teen Check</h1>
+        <div class="chat-header-top">
+          <span class="dot-logo"></span>
+          <h1 id="chatHeading">Teen Check</h1>
+        </div>
+        <div class="chat-progress" id="chatProgress" style="display:none">
+          <div class="cp-track"><div class="cp-fill" id="cpFill"></div></div>
+          <div class="cp-label" id="cpLabel"></div>
+        </div>
       </div>
       <div class="messages-area" id="messagesArea">
         <div id="messages" aria-live="polite" aria-atomic="false" role="log"></div>

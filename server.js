@@ -88,6 +88,15 @@ function interviewQuestionNum(turns) {
   return Math.max(1, Math.min(asked, TOTAL_QUESTIONS));
 }
 
+// Coarse phase label for the visible progress bar (the interview is model-paced,
+// so this is an approximate map, not a strict state machine).
+function phaseFor(q) {
+  if (q <= 3) return 'Getting started';
+  if (q <= 8) return 'What you want';
+  if (q <= 13) return 'Your money reality';
+  return 'Patterns & your move';
+}
+
 // Format a stored turn array into the speaker-labelled transcript the scoring
 // prompts expect (identical to the client's previous buildTranscript output).
 function formatTranscript(turns, userLabel, asstLabel) {
@@ -371,7 +380,9 @@ app.post('/api/interview/turn', async (req, res) => {
     const complete = raw.includes(COMPLETE_SENTINEL);
     turns.push({ role: 'assistant', content: clean });
     await db.updateSession(session.id, Object.assign({ turns: Object.assign({}, store, { interview: turns }) }, complete ? { interview_complete: true } : {}));
-    res.json({ message: clean, complete });
+    // Progress for the header bar: the opening frame isn't a numbered question.
+    const q = Math.max(0, turns.filter(t => t.role === 'assistant').length - 1);
+    res.json({ message: clean, complete, progress: { q, total: TOTAL_QUESTIONS, phase: phaseFor(q) } });
   } catch (e) {
     console.error('interview turn error:', e.message);
     res.status(502).json({ error: 'interview error' });
@@ -409,8 +420,10 @@ app.post('/api/skills/turn', async (req, res) => {
     }
     const complete = raw.includes(SKILLS_SENTINEL);
     turns.push({ role: 'assistant', content: clean });
-    await db.updateSession(session.id, { turns: Object.assign({}, store, { skills: turns }) });
-    res.json({ message: clean, complete });
+    await db.updateSession(session.id, { turns: Object.assign({}, store, { skills: turns }, complete ? { skills_done: true } : {}) });
+    // Skills opens directly on scenario 1 (no frame), so q = scenario number.
+    const q = Math.min(turns.filter(t => t.role === 'assistant').length, 5);
+    res.json({ message: clean, complete, progress: { q, total: 5, phase: 'Scenario ' + Math.max(1, q) } });
   } catch (e) {
     console.error('skills turn error:', e.message);
     res.status(502).json({ error: 'skills error' });
@@ -438,13 +451,13 @@ app.post('/api/score', async (req, res) => {
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.B) return res.status(500).json({ error: 'scoring not configured' });
-  // Prefer the SERVER-held transcript (Phase 4). Fall back to a client-supplied
-  // one only while the pre-Phase-4 client is still in the wild.
+  // Score ONLY the server's own completed transcript — no client-supplied
+  // transcript, and only after the interview actually completed. This blocks a
+  // session holder from submitting an arbitrary transcript to scoring (audit P0).
+  if (!session.interview_complete) return res.status(409).json({ error: 'interview not complete' });
   const storedI = (session.turns && Array.isArray(session.turns.interview)) ? session.turns.interview : null;
-  const transcript = (storedI && storedI.length)
-    ? formatTranscript(storedI, 'TEEN', 'INTERVIEWER')
-    : String((req.body && req.body.transcript) || '');
-  if (!transcript) return res.status(400).json({ error: 'transcript required' });
+  if (!storedI || !storedI.length) return res.status(409).json({ error: 'no interview transcript' });
+  const transcript = formatTranscript(storedI, 'TEEN', 'INTERVIEWER');
   const system = SERVER_PROMPTS.B.split('{{TEEN_AGE}}').join(String(session.teen_age));
   try {
     let parsed = null;
@@ -476,11 +489,12 @@ app.post('/api/skills-score', async (req, res) => {
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.D) return res.status(500).json({ error: 'scoring not configured' });
+  // Same as scoring: only the server's own completed skills transcript.
   const storedS = (session.turns && Array.isArray(session.turns.skills)) ? session.turns.skills : null;
-  const transcript = (storedS && storedS.length)
-    ? formatTranscript(storedS, 'PERSON', 'GUIDE')
-    : String((req.body && req.body.transcript) || '');
-  if (!transcript) return res.status(400).json({ error: 'transcript required' });
+  if (!(session.turns && session.turns.skills_done) || !storedS || !storedS.length) {
+    return res.status(409).json({ error: 'skills not complete' });
+  }
+  const transcript = formatTranscript(storedS, 'PERSON', 'GUIDE');
   const system = SERVER_PROMPTS.D.split('{{TEEN_AGE}}').join(String(session.teen_age));
   try {
     const text = await callAnthropic({ model: 'claude-opus-4-8', system, messages: [{ role: 'user', content: transcript }], max_tokens: 2000 });

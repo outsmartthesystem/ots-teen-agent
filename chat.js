@@ -113,6 +113,8 @@ function resumeFromServer(turns) {
     if (t.role === 'user') addMessage(t.content, 'user');
     else renderAssistantMessage(t.content);
   });
+  const asst = turns.filter(t => t.role === 'assistant').length;
+  updateProgress({ q: Math.max(0, asst - 1), total: 16, phase: '' });
   scrollToBottom();
   reEnableInput();
 }
@@ -229,6 +231,7 @@ async function requestTurn(answer) {
       (skills ? skillsHistory : conversationHistory).push({ role: 'assistant', content: data.message });
       renderAssistantMessage(data.message);
     }
+    if (data.progress) updateProgress(data.progress);
 
     if (data.safety) { handleSafety(data.safety); reEnableInput(); return; }
 
@@ -253,6 +256,22 @@ function reEnableInput() {
   if (sendBtn) sendBtn.disabled = false;
   if (input) { input.disabled = false; input.focus(); }
   scrollToBottom();
+}
+
+// Visible progress bar in the chat header. Driven by server-supplied metadata so
+// the client never has to infer where the teen is.
+function updateProgress(p) {
+  const wrap = document.getElementById('chatProgress');
+  const fill = document.getElementById('cpFill');
+  const label = document.getElementById('cpLabel');
+  if (!wrap || !fill || !label || !p) return;
+  const total = p.total || 16;
+  const q = Math.max(0, Math.min(p.q || 0, total));
+  fill.style.width = Math.round((q / total) * 100) + '%';
+  label.textContent = window.mode === 'skills'
+    ? (p.phase || 'Scenarios') + ' · ' + q + ' of ' + total
+    : (p.phase ? p.phase + ' · ' : '') + 'Q' + q + ' of ~' + total;
+  wrap.style.display = 'flex';
 }
 
 // ─── SAFETY HANDLING ─────────────────────────────────────────────────────
@@ -509,6 +528,7 @@ function startSkills() {
   skillsHistory.length = 0;
   const messages = document.getElementById('messages');
   while (messages.firstChild) messages.removeChild(messages.firstChild);
+  const cp = document.getElementById('chatProgress'); if (cp) cp.style.display = 'none'; // reset bar for scenarios
   const bar = document.getElementById('inputBar');
   if (bar) bar.style.display = '';
   const h = document.getElementById('chatHeading');
