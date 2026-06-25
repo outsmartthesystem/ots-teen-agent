@@ -304,6 +304,7 @@ app.post('/api/score', async (req, res) => {
       return res.json({ safety: flag });
     }
     await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true });
+    sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     res.json({ result: parsed }); // no parent_email anywhere in the model output
   } catch (e) {
     console.error('score error:', e.message);
@@ -340,6 +341,7 @@ app.post('/api/skills-score', async (req, res) => {
         await db.updateSession(session.id, { report_draft: draft });
       }
     }
+    sendArchiveEmail(session, 'money scenarios', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     res.json({ money_judgment: mj });
   } catch (e) {
     console.error('skills-score error:', e.message);
@@ -570,6 +572,44 @@ async function fireSafetyAlert(flag, info) {
   }
 }
 
+// ─── TEST-PHASE SESSION ARCHIVE ─────────────────────────────────────────────
+// During the supervised pilot, email a FULL record (transcript + assessment) to
+// ARCHIVE_EMAIL_TO so there's data to improve the product. Gated entirely by
+// that env var: unset = OFF. Remove it (or clear it) to turn recording off at
+// go-live. It reuses the Gmail transport, so EMAIL_USER/EMAIL_PASS must be set.
+//
+// SAFETY CARVE-OUT: a safety-flagged session is NEVER archived. CRISIS/ABUSE
+// disclosures are purged on the device and handled by the (quote-free) safety
+// alert — they must not land verbatim in an archive inbox.
+function archiveEnabled() { return !!(process.env.ARCHIVE_EMAIL_TO && safetyMailer); }
+
+async function sendArchiveEmail(session, kind, transcript, assessment) {
+  if (!archiveEnabled()) return;
+  if (session.safety_blocked) { console.warn('[ARCHIVE_SKIP] safety-flagged sid=' + session.id); return; }
+  const to = process.env.ARCHIVE_EMAIL_TO;
+  const pretty = (() => { try { return JSON.stringify(assessment, null, 2); } catch { return String(assessment); } })();
+  const pre = 'white-space:pre-wrap;word-break:break-word;background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;padding:12px;font-size:12px';
+  const subject = `[Teen Check archive] ${session.teen_first_name} (${session.teen_age}) — ${kind}`;
+  const html =
+    `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:760px;color:#1a1a1a;line-height:1.5;font-size:14px">` +
+    `<p style="background:#fff7e6;border:1px solid #ffe0a3;padding:8px 12px;border-radius:8px;font-size:12px">TEST-PHASE RECORDING — internal improvement data. Turn off by clearing <b>ARCHIVE_EMAIL_TO</b> before go-live.</p>` +
+    `<p><b>Session:</b> ${escHtml(session.id)}<br><b>Teen:</b> ${escHtml(session.teen_first_name)} (age ${escHtml(session.teen_age)})<br><b>Parent:</b> ${escHtml(session.parent_first_name)} &lt;${escHtml(session.parent_email)}&gt;<br><b>Stage:</b> ${escHtml(kind)}</p>` +
+    `<h3 style="margin:18px 0 6px">Full assessment</h3><pre style="${pre}">${escHtml(pretty)}</pre>` +
+    `<h3 style="margin:18px 0 6px">Full transcript</h3><pre style="${pre}">${escHtml(transcript)}</pre>` +
+    `</div>`;
+  const text =
+    `TEST-PHASE RECORDING — internal improvement data (clear ARCHIVE_EMAIL_TO to disable).\n` +
+    `Session: ${session.id}\nTeen: ${session.teen_first_name} (age ${session.teen_age})\n` +
+    `Parent: ${session.parent_first_name} <${session.parent_email}>\nStage: ${kind}\n\n` +
+    `===== FULL ASSESSMENT =====\n${pretty}\n\n===== FULL TRANSCRIPT =====\n${transcript}\n`;
+  try {
+    await safetyMailer.sendMail({ from: process.env.EMAIL_USER, to, subject, html, text });
+    console.log('[ARCHIVE_SENT]', kind, '→', to, '| sid=' + session.id);
+  } catch (err) {
+    console.error('Archive email error:', err.message);
+  }
+}
+
 // Client-reported safety event (cookie-gated). Acks regardless so the client
 // never learns whether/how an alert was routed. Persists the durable block.
 app.post('/api/safety-event', async (req, res) => {
@@ -654,7 +694,8 @@ app.get('/api/health', (req, res) => {
     durable_db: db.backend() === 'postgres'   // in-memory is dev-only, not launch-ready
   };
   const missing = Object.keys(configured).filter(k => !configured[k]);
-  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), configured, missing });
+  // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready.
+  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
 });
 
 app.use(express.static(path.join(__dirname)));

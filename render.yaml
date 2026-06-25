@@ -21,5 +21,7 @@ services:
         sync: false
       - key: SAFETY_ALERT_TO        # where CRISIS/ABUSE alerts go (defaults to EMAIL_USER)
         sync: false
+      - key: ARCHIVE_EMAIL_TO       # TEST PHASE ONLY: full session record emailed here; clear to disable
+        sync: false
       - key: PUBLIC_BASE_URL        # optional; clean teen-link base
         sync: false
