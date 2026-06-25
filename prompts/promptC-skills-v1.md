@@ -30,7 +30,7 @@ VOICE AND RULES
 OPENING (your first message)
 ========================================
 Open with a short frame, then go straight into Scenario 1:
-"Cool — four-ish quick ones. No right answers, I just want to see how you'd actually think each one through. First one:"
+"Cool — five quick ones. No right answers, I just want to see how you'd actually think each one through. First one:"
 Then give Scenario 1.
 
 ========================================

@@ -269,6 +269,10 @@ function reEnableInput() {
 // path) is step 7 and is NOT built. reportSafetyEvent is the seam for it.
 function handleSafety(flag) {
   window.safetyEvent = flag;
+  // Purge the transcript from the device NOW for serious flags, so the
+  // disclosure can't be reopened on a shared/parent device. saveSession() also
+  // refuses to write once safetyEvent is CRISIS/ABUSE.
+  if (flag === 'CRISIS' || flag === 'ABUSE') clearSession();
   showResources(flag);
   reportSafetyEvent(flag);
 
@@ -447,7 +451,7 @@ function renderResult(parsed) {
   if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
     const card = elem('div', 'skills-optin');
     card.appendChild(elem('div', 'skills-optin-title', 'Want a sharper read?'));
-    card.appendChild(elem('p', 'skills-optin-text', 'Answer four quick real-life money scenarios — about three minutes — and I’ll fold a money-judgment read into your result.'));
+    card.appendChild(elem('p', 'skills-optin-text', 'Answer five quick real-life money scenarios — about three minutes — and I’ll fold a money-decision read into your result.'));
     const sBtn = elem('button', 'btn btn-primary skills-optin-btn', 'Sharpen my read →');
     sBtn.addEventListener('click', startSkills);
     card.appendChild(sBtn);
@@ -526,7 +530,7 @@ async function scoreSkills() {
   try {
     const r = await fetch('/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL_SCORING, max_tokens: 2000, system, messages: [{ role: 'user', content: transcript }] })
+      body: JSON.stringify({ model: MODEL_SCORING, max_tokens: 2000, system, messages: [{ role: 'user', content: transcript }], t: window.rawToken })
     });
     const data = await r.json();
     if (!data || !data.content || !data.content[0]) throw new Error('bad skills response');
@@ -535,8 +539,9 @@ async function scoreSkills() {
     window.mode = 'interview';
     if (!parsed) throw new Error('could not parse skills JSON');
     if (parsed.safety_check && parsed.safety_check.clear === false) {
-      window.blockParentReport = true;
-      showResources(parsed.safety_check.flag || 'SUPPORT');
+      // Route a scenario-surfaced safety flag through the same handler as the
+      // interview — server reporting, resources, device purge, report block.
+      handleSafety(parsed.safety_check.flag || 'SUPPORT');
       renderResult(window.scoringResult);
       return;
     }
@@ -569,10 +574,10 @@ function mergeMoneyJudgmentIntoReport() {
 
 function buildMoneyJudgmentSection(mj) {
   const wrap = elem('div', 'mj-section');
-  wrap.appendChild(elem('div', 'mj-title', 'Money judgment — from your scenarios'));
+  wrap.appendChild(elem('div', 'mj-title', 'Money decisions — from your scenarios'));
   if (mj.score != null) {
     const row = elem('div', 'bar-row');
-    row.appendChild(elem('div', 'bar-label', 'Judgment'));
+    row.appendChild(elem('div', 'bar-label', 'Decisions'));
     const track = elem('div', 'bar-track');
     const fill = elem('div', 'bar-fill');
     fill.style.width = (clamp(mj.score, 0, 5) / 5 * 100) + '%';
@@ -588,6 +593,20 @@ function buildMoneyJudgmentSection(mj) {
     appendTextWithLineBreaks(p, mj.teen_summary);
     wrap.appendChild(p);
   }
+  // Per-scenario insight cards — the personalized, educational read (previously
+  // discarded). One compact card per scenario: lesson, what you showed, quote.
+  if (Array.isArray(mj.per_scenario) && mj.per_scenario.length) {
+    const grid = elem('div', 'mj-scenarios');
+    mj.per_scenario.forEach(s => {
+      if (!s || !s.read) return;
+      const card = elem('div', 'mj-scenario');
+      card.appendChild(elem('div', 'mj-scenario-lesson', s.lesson || ''));
+      const r = elem('div', 'mj-scenario-read'); appendTextWithLineBreaks(r, s.read); card.appendChild(r);
+      if (s.quote) card.appendChild(elem('div', 'mj-scenario-quote', '“' + s.quote + '”'));
+      grid.appendChild(card);
+    });
+    if (grid.children.length) wrap.appendChild(grid);
+  }
   return wrap;
 }
 
@@ -600,9 +619,16 @@ function buildMoneyJudgmentSection(mj) {
 function showPreview() {
   if (window.blockParentReport) return; // safety guard — never reachable, but defensive
   const draft = (window.scoringResult && window.scoringResult.parent_report_draft) || {};
-  window.previewItems = (draft.shareable_items || []).map(it => ({
+  const items = (draft.shareable_items || []).map(it => ({
     id: it.id, category: it.category, text: it.text, evidence_quote: it.evidence_quote || null, shared: true
   }));
+  // EVERY personalized inference is teen-controlled — including the growth
+  // horizon, confidence summary, and program fit, which used to send regardless
+  // of veto. Only truly generic framing (limitation + what-not-to-do) stays fixed.
+  if (draft.growth_horizon) items.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null, shared: true });
+  if (draft.confidence_summary) items.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null, shared: true });
+  if (draft.program_fit && draft.program_fit.text) items.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null, shared: true });
+  window.previewItems = items;
   showScreen('preview');
   renderPreview(draft);
 }
@@ -620,15 +646,13 @@ function renderPreview(draft) {
   // Read-only framing the teen can see but not veto.
   const fixed = draft.fixed_framing || {};
   const ro = elem('div', 'pv-readonly');
-  ro.appendChild(elem('div', 'pv-ro-title', 'What ' + parent + ' also sees (you can’t change this part)'));
+  ro.appendChild(elem('div', 'pv-ro-title', 'The only part you can’t change — general ground rules, not anything about you'));
   if (fixed.limitation) ro.appendChild(para(fixed.limitation));
   if (Array.isArray(fixed.what_not_to_do) && fixed.what_not_to_do.length) {
     const ul = document.createElement('ul');
     fixed.what_not_to_do.forEach(x => { const li = document.createElement('li'); appendTextWithLineBreaks(li, x); ul.appendChild(li); });
     ro.appendChild(ul);
   }
-  if (draft.confidence_summary) ro.appendChild(para(draft.confidence_summary));
-  if (draft.program_fit && draft.program_fit.text) ro.appendChild(para(draft.program_fit.text));
   root.appendChild(ro);
 
   const send = elem('button', 'btn btn-primary pv-send', 'Send to ' + parent);
@@ -693,7 +717,10 @@ function categoryLabel(cat) {
     strength: 'A strength you showed',
     growth_area: 'A growth area',
     environmental: 'Context worth knowing',
-    money_judgment: 'Your money judgment'
+    money_judgment: 'Your money judgment',
+    growth_horizon: 'Where you are → where you could be',
+    confidence: 'How solid this read is',
+    program_fit: 'How OTS could help'
   })[cat] || 'Shared';
 }
 
@@ -702,15 +729,14 @@ async function sendParentReport() {
   if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = 'Sending…'; }
   const draft = (window.scoringResult && window.scoringResult.parent_report_draft) || {};
 
-  // FREEZE: approved (shared) items with their possibly-edited text. No Prompt B re-call.
+  // FREEZE: approved (shared) items with their possibly-edited text. No Prompt B
+  // re-call. Personalized fields (growth horizon, confidence, program fit) now
+  // travel as approved items only — nothing personalized bypasses the veto.
   const approved_report = {
     shareable_items: window.previewItems
       .filter(i => i.shared)
       .map(i => ({ id: i.id, category: i.category, text: i.text, evidence_quote: i.evidence_quote })),
-    fixed_framing: draft.fixed_framing || null,
-    growth_horizon: draft.growth_horizon || '',
-    confidence_summary: draft.confidence_summary || '',
-    program_fit: draft.program_fit || null
+    fixed_framing: draft.fixed_framing || null
   };
 
   try {
@@ -935,8 +961,14 @@ function estimateQuestion() {
 }
 
 // ─── SESSION PERSISTENCE ─────────────────────────────────────────────────
+// Uses sessionStorage, NOT localStorage: the transcript survives an accidental
+// reload but is wiped when the tab/browser closes — important because the app is
+// often set up on a shared or parent's device. After a CRISIS/ABUSE disclosure
+// nothing is persisted at all, and any prior state is purged immediately.
 function saveSession() {
   if (!window.rawToken) return;
+  // Never write a transcript to the device once a serious safety event has fired.
+  if (window.safetyEvent === 'CRISIS' || window.safetyEvent === 'ABUSE') return;
   const state = {
     token: window.rawToken,
     conversationHistory,
@@ -945,26 +977,28 @@ function saveSession() {
     interviewComplete: window.interviewComplete,
     savedAt: new Date().toISOString()
   };
-  try { localStorage.setItem(SESSION_KEY, JSON.stringify(state)); }
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); }
   catch (e) { console.warn('Could not save session:', e); }
 }
 
 function loadSession() {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const state = JSON.parse(raw);
     if (!state.savedAt || !state.conversationHistory) return null;
     const ageH = (Date.now() - new Date(state.savedAt).getTime()) / 36e5;
     if (ageH > SESSION_MAX_AGE_HOURS) { clearSession(); return null; }
     if (state.interviewComplete) { clearSession(); return null; }
-    if (state.safetyEvent === 'CRISIS') { clearSession(); return null; } // don't resume a crisis
+    // Never resume or re-display a safety-flagged session.
+    if (state.safetyEvent === 'CRISIS' || state.safetyEvent === 'ABUSE') { clearSession(); return null; }
     return state;
   } catch (e) { return null; }
 }
 
 function clearSession() {
-  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+  try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {} // purge any legacy localStorage copy
 }
 
 // ─── RENDERING (safe: never innerHTML on model/user text) ────────────────

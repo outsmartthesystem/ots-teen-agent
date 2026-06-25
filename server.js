@@ -186,7 +186,10 @@ const REPORT_CATEGORY_LABEL = {
   strength: 'A strength',
   growth_area: 'A growth area',
   environmental: 'Context worth knowing',
-  money_judgment: 'Money judgment'
+  money_judgment: 'Money judgment',
+  growth_horizon: 'Where they are, and where they could be',
+  confidence: 'How solid this read is',
+  program_fit: 'How OTS could help'
 };
 function buildParentEmail(report, teenName, parentName) {
   const items = Array.isArray(report.shareable_items) ? report.shareable_items : [];
@@ -203,21 +206,12 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) h += `<div style="margin-top:7px;font-style:italic;color:#555">&ldquo;${escHtml(it.evidence_quote)}&rdquo;</div>`;
     h += `</div>`;
   });
-  if (report.growth_horizon) {
-    h += `<div style="margin:18px 0;padding:14px 16px;background:#f7f5ff;border:1px solid #ddd6f3;border-radius:10px">`;
-    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6a5acd;margin-bottom:5px">Where they are, and where they could be</div>`;
-    h += `<div style="color:#333">${escHtml(report.growth_horizon)}</div></div>`;
-  }
-  if (report.confidence_summary) h += `<p style="color:#444;margin:18px 0">${escHtml(report.confidence_summary)}</p>`;
+  // growth horizon, confidence, and program fit now arrive as approved items
+  // above (teen-vetoable) — they are no longer auto-appended here.
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     h += `<p style="font-weight:600;margin:18px 0 6px">A few things to keep in mind:</p><ul style="color:#444;margin:0;padding-left:20px">`;
     ff.what_not_to_do.forEach(x => h += `<li style="margin-bottom:4px">${escHtml(x)}</li>`);
     h += `</ul>`;
-  }
-  if (pf.text) {
-    h += `<div style="margin:20px 0;padding:13px 16px;background:#f0fbf5;border:1px solid #cdeede;border-radius:10px">`;
-    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#3a9b6e;margin-bottom:5px">If it&rsquo;s useful</div>`;
-    h += `<div style="color:#333">${escHtml(pf.text)}</div></div>`;
   }
   h += `<p style="font-size:12px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:12px">Outsmart the System &middot; outsmartthesystem.org<br>This snapshot was approved by ${escHtml(teenName)} before it was sent.</p>`;
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.55;font-size:15px">${h}</div>`;
@@ -229,14 +223,11 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) t += '"' + it.evidence_quote + '"\n';
     t += '\n';
   });
-  if (report.growth_horizon) t += 'WHERE THEY ARE, AND WHERE THEY COULD BE\n' + report.growth_horizon + '\n\n';
-  if (report.confidence_summary) t += report.confidence_summary + '\n\n';
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     t += 'A few things to keep in mind:\n';
     ff.what_not_to_do.forEach(x => t += '- ' + x + '\n');
     t += '\n';
   }
-  if (pf.text) t += pf.text + '\n\n';
   t += 'Outsmart the System — outsmartthesystem.org\nApproved by ' + teenName + ' before sending.';
 
   return { subject: `${teenName}'s Teen Check — what they chose to share`, html, text: t };
@@ -245,6 +236,13 @@ function buildParentEmail(report, teenName, parentName) {
 app.post('/api/parent-report', async (req, res) => {
   const payload = verifyToken(req.body && req.body.t);
   if (!payload) return res.status(401).json({ error: 'invalid or expired token' });
+  // Server-enforced safety block: if this session ever flagged CRISIS/ABUSE, no
+  // report goes out — even if a modified browser or second device asks. (The
+  // 200 shape mirrors success so a probing client learns nothing.)
+  if (payload.sid && safetyBlockedSids.has(payload.sid)) {
+    console.warn('[PARENT_REPORT_BLOCKED] safety-flagged sid=' + payload.sid);
+    return res.json({ success: true });
+  }
   const webhook = process.env.TEEN_MAKE_WEBHOOK_URL;
   if (!webhook) return res.status(500).json({ error: 'Server not configured: TEEN_MAKE_WEBHOOK_URL missing' });
   const approved = req.body && req.body.approved_report;
@@ -303,7 +301,11 @@ app.post('/api/parent-report', async (req, res) => {
 // ABUSE alerts are stamped do_not_contact_parent: the parent may be the threat.
 const SAFETY_FLAGS = new Set(['CRISIS', 'ABUSE', 'SUPPORT', 'DISTRESS']);
 const SAFETY_EMAIL_FLAGS = new Set(['CRISIS', 'ABUSE']);
-const alertedEvents = new Set(); // dedup keys: `${sid}:${flag}`
+const SAFETY_BLOCK_FLAGS = new Set(['CRISIS', 'ABUSE']); // these block any parent report
+const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}`
+const safetyBlockedSids = new Set(); // sids that hit CRISIS/ABUSE — parent report refused server-side
+// NOTE: in-memory only. Survives the process, not a restart or a second instance.
+// The durable fix is server-side session state (see the audit's P0 rearchitecture).
 
 // Pre-render the responder alert email. Contains NO teen disclosure — only the
 // flag, first name, age, session id. ABUSE carries a do-not-contact-parent banner.
@@ -341,6 +343,10 @@ async function fireSafetyAlert(flag, info) {
   if (alertedEvents.size > 10000) alertedEvents.clear(); // bound memory
 
   console.warn('[SAFETY_EVENT]', flag, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
+
+  // Server-side block: once a session hits CRISIS/ABUSE, refuse any parent
+  // report for it regardless of what a (possibly modified) client claims.
+  if (SAFETY_BLOCK_FLAGS.has(flag) && info.sid) safetyBlockedSids.add(info.sid);
 
   if (!SAFETY_EMAIL_FLAGS.has(flag)) return; // SUPPORT/DISTRESS: recorded, not emailed
   if (!safetyMailer) {
