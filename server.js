@@ -137,7 +137,7 @@ app.post('/api/register', (req, res) => {
   if (tName.length < 1 || tName.length > 40) return res.status(400).json({ error: 'teen_first_name required (1–40 chars)' });
   if (pName.length < 1 || pName.length > 40) return res.status(400).json({ error: 'parent_first_name required (1–40 chars)' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pEmail)) return res.status(400).json({ error: 'valid parent_email required' });
-  if (!Number.isInteger(age) || age < 13 || age > 18) return res.status(400).json({ error: 'teen_age must be an integer 13–18' });
+  if (!Number.isInteger(age) || age < 13 || age > 25) return res.status(400).json({ error: 'age must be an integer 13–25' });
 
   const now = Math.floor(Date.now() / 1000);
   const payload = {
@@ -202,6 +202,11 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) h += `<div style="margin-top:7px;font-style:italic;color:#555">&ldquo;${escHtml(it.evidence_quote)}&rdquo;</div>`;
     h += `</div>`;
   });
+  if (report.growth_horizon) {
+    h += `<div style="margin:18px 0;padding:14px 16px;background:#f7f5ff;border:1px solid #ddd6f3;border-radius:10px">`;
+    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#6a5acd;margin-bottom:5px">Where they are, and where they could be</div>`;
+    h += `<div style="color:#333">${escHtml(report.growth_horizon)}</div></div>`;
+  }
   if (report.confidence_summary) h += `<p style="color:#444;margin:18px 0">${escHtml(report.confidence_summary)}</p>`;
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     h += `<p style="font-weight:600;margin:18px 0 6px">A few things to keep in mind:</p><ul style="color:#444;margin:0;padding-left:20px">`;
@@ -223,6 +228,7 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) t += '"' + it.evidence_quote + '"\n';
     t += '\n';
   });
+  if (report.growth_horizon) t += 'WHERE THEY ARE, AND WHERE THEY COULD BE\n' + report.growth_horizon + '\n\n';
   if (report.confidence_summary) t += report.confidence_summary + '\n\n';
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     t += 'A few things to keep in mind:\n';

@@ -81,13 +81,14 @@
         <input id="teenName" maxlength="40">
         <div class="field-error" id="teenNameErr">Please add your teen’s first name.</div>
 
-        <label for="teenAge">Your teen’s age</label>
+        <label for="teenAge">Their age</label>
         <select id="teenAge">
           <option value="">Select…</option>
-          <option>13</option><option>14</option><option>15</option>
-          <option>16</option><option>17</option><option>18</option>
+          <option>13</option><option>14</option><option>15</option><option>16</option>
+          <option>17</option><option>18</option><option>19</option><option>20</option>
+          <option>21</option><option>22</option><option>23</option><option>24</option><option>25</option>
         </select>
-        <div class="field-error" id="teenAgeErr">The Teen Check is built for ages 13–18.</div>
+        <div class="field-error" id="teenAgeErr">Please choose an age between 13 and 25.</div>
 
         <button class="btn" id="submitBtn" type="submit">Create my teen’s link</button>
         <div class="form-error" id="formError"></div>
@@ -135,7 +136,7 @@
           parentNameErr: !parentName,
           parentEmailErr: !validEmail(parentEmail),
           teenNameErr: !teenName,
-          teenAgeErr: !(teenAge >= 13 && teenAge <= 18)
+          teenAgeErr: !(teenAge >= 13 && teenAge <= 25)
         };
         let ok = true;
         Object.keys(checks).forEach(id => { showFieldError(id, checks[id]); if (checks[id]) ok = false; });

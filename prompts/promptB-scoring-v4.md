@@ -39,13 +39,14 @@ Anchors (1 / 3 / 5):
 RULES FOR SCORING (apply all):
 1. Evidence over polish. A smooth, generic answer is WEAK evidence and scores low. Reward specificity and ownership, not how good it sounds.
 2. Opportunity-relative (especially SELF_REGULATION and AGENCY). Score the absence of action as low ONLY if the teen had a realistic chance to act and didn't. Real constraints — no work access, disability, caregiving, family restrictions, young age — are accurate self-description, not deficits. Score what they did with the room they had. Asking for appropriate help RAISES Agency; it never lowers it.
-3. Age-banded expectations. Calibrate expected evidence to the teen's age: 13–14 (short-horizon vision; "initiative" = saving allowance/birthday money, a chore deal, asking to earn at home; no job expected). 15–16 (some first jobs/gig income possible; more concrete awareness, but absence isn't a deficit). 17–18 (realistic access to work, accounts, bigger decisions; expect richer evidence where opportunity exists). The skill is the same across ages; only the expected evidence shifts.
+3. Age-banded expectations. Calibrate expected evidence to the person's age: 13–14 (short-horizon vision; "initiative" = saving allowance/birthday money, a chore deal, asking to earn at home; no job expected). 15–16 (some first jobs/gig income possible; more concrete awareness, but absence isn't a deficit). 17–18 (realistic access to work, accounts, bigger decisions; expect richer evidence where opportunity exists). 19 and older / young adults (legal-adult access to work, accounts, credit, leases, real decisions; expect the richest evidence where opportunity exists — but absence still isn't a deficit: someone in full-time school, caregiving, or without income access is giving accurate self-description, not a low score). The skill is the same across ages; only the expected evidence shifts.
 4. Determine the supporting evidence, contradictory evidence, and contextual limitations for each dimension BEFORE you assign its number.
 5. Require at least 2 independent pieces of evidence for any score of 1, 4, or 5. "Independent" means different questions or behaviors — not a question plus its own follow-up. If you only have one piece, move the score toward the middle and lower the confidence.
 6. Choose the best-supported score. When evidence is ambiguous, LOWER the confidence — do not automatically lower the score.
 7. Do not force any expected distribution and do not compare the teen to peers ("ahead of most teens your age"). Score only what's in the transcript.
 8. Quotes you cite as evidence must be VERBATIM from the transcript. Never invent a quote. If you have no real evidence, leave it empty and set confidence to insufficient.
 9. A low score describes a starting point, never a character verdict.
+10. Non-answers are not evidence. If the teen drifted off a question or never actually answered it (e.g., asked for the last thing they bought, they talked about wanting more trading capital instead), do NOT score the drift content as if it answered the intended question. Treat that probe as no-evidence for the dimension it was meant to measure — lower the confidence and, if that leaves the dimension without real evidence, score it null/insufficient rather than inventing a read from a non-answer.
 
 CONFIDENCE per dimension:
 - high = at least 3 independent, consistent signals
@@ -75,8 +76,10 @@ Generate:
 - goal_reflected: their main goal (Q5) in their own words, reflected back.
 - demonstrated_strength: one real strength they showed, with a VERBATIM evidence quote from the transcript. If genuinely none exists, name the most positive thing honestly without inventing.
 - biggest_unlock: the single growth area named as a skill, framed as the bridge between their goal and where they are. Format: you want X, you've shown Y, the skill between them is Z.
+- growth_horizon: the gap made clear and motivating — two short sentences naming where they are now and where they could be if they build the unlock skill, tied to their goal. Format: "Right now you're [current state, plain and kind]. Build [the skill] and you're [where they could be, tied to their goal]." This is the "here's the gap, and it's closable" line — concrete, not hype.
+- confidence_note: one short, plain teen-facing line on how solid this read is, naming the clearest-evidence dimension and the lightest. e.g. "This is a snapshot from one conversation — not the whole story. Clearest read: Pattern Awareness. Lighter: Self-Regulation." Honest, never hedgy or anxious.
 - seven_day_move: one small, concrete action they could take this week, tied to their goal and the growth skill.
-- choice: two options — try the seven-day move solo, OR see how Outsmart the System helps build the whole system (with their parent/guardian in it with them). Never "your score is low so you need this."
+- choice: two options — (solo) try the seven-day move on your own; (ots) see how Outsmart the System helps you turn this into a repeatable system. The teen-facing choice is TEEN-OWNED: do NOT name or reintroduce the parent/guardian here — that belongs in the parent report. Never "your score is low so you need this."
 - high_scorer_pathway: only if stage is "Building" or "Outsmarting" — a credible non-remedial next step emphasizing advanced investing, leadership, entrepreneurship, systems, mentoring. Otherwise null.
 
 ========================================
@@ -97,6 +100,7 @@ SHAREABLE items (array; each is a teen-specific disclosure the teen can veto):
 - environmental: where lack of exposure, household financial transparency, restrictions, or opportunity may explain a result rather than the teen's ability or effort. Include this whenever it applies — it's the fairness principle made visible.
 
 Also generate (not part of the vetoable list):
+- growth_horizon: a calm, parent-facing "where they are now / where they could be" line that makes the gap clear without alarm. Name the current snapshot and the realistic next step the growth skill unlocks, framed as potential, not deficit. e.g. "Right now Maya is finding her footing on turning what she notices into action; with that one skill, she's well set up to start converting insight into self-started moves toward the direction she wants." This is the parent's version of the gap — current state, reachable next step, and that it's closable.
 - confidence_summary: a plain, distilled sentence on how solid the read is, naming any dimension you couldn't assess honestly ("we didn't get enough to assess X — that's a gap in the conversation, not a judgment of the teen"). Do NOT dump all the per-dimension fields on the parent.
 - program_fit: a SEPARATE section mapping the growth area to specific OTS lessons, framed as offered, never as proof of need. Map: Vision → Closer Over More / Waterline; Awareness → Budgeting / Compound Effect; Self-Regulation → Making Good Excuses / Changing Your Environment; Pattern Awareness → Crucial Conversations / Drama Triangle; Agency → Closing the Gap / Idea-to-Income.
 
@@ -127,6 +131,8 @@ OUTPUT: emit exactly this JSON shape
     "goal_reflected": "",
     "demonstrated_strength": { "text": "", "evidence_quote": "" },
     "biggest_unlock": { "skill": "", "framing": "" },
+    "growth_horizon": "",
+    "confidence_note": "",
     "seven_day_move": "",
     "stage_display": "",
     "bars": [
@@ -147,6 +153,7 @@ OUTPUT: emit exactly this JSON shape
     "shareable_items": [
       { "id": "s1", "category": "what_matters", "text": "", "evidence_quote": null }
     ],
+    "growth_horizon": "",
     "confidence_summary": "",
     "program_fit": { "growth_area": "", "lessons": [], "text": "" }
   }

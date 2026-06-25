@@ -384,6 +384,18 @@ function renderResult(parsed) {
     root.appendChild(buildBars(t.bars));
   }
 
+  // Honest confidence line — tempers the precise-looking bars.
+  if (t.confidence_note) {
+    const c = elem('p', 'confidence-note');
+    appendTextWithLineBreaks(c, t.confidence_note);
+    root.appendChild(c);
+  }
+
+  // The gap: where you are → where you could be.
+  if (t.stage_display || t.growth_horizon) {
+    root.appendChild(buildGapSection(t));
+  }
+
   // Strength + verbatim evidence quote.
   const strength = t.demonstrated_strength;
   if (strength && strength.text) {
@@ -560,6 +572,7 @@ async function sendParentReport() {
       .filter(i => i.shared)
       .map(i => ({ id: i.id, category: i.category, text: i.text, evidence_quote: i.evidence_quote })),
     fixed_framing: draft.fixed_framing || null,
+    growth_horizon: draft.growth_horizon || '',
     confidence_summary: draft.confidence_summary || '',
     program_fit: draft.program_fit || null
   };
@@ -616,6 +629,38 @@ function buildBars(bars) {
     }
     wrap.appendChild(row);
   });
+  return wrap;
+}
+
+// The five OTS stages, in order — used to draw the "where you could be" ladder.
+const STAGES = ['Waking Up', 'Aware', 'In Motion', 'Building', 'Outsmarting'];
+
+function buildGapSection(t) {
+  const wrap = elem('div', 'gap-section');
+  wrap.appendChild(elem('div', 'gap-title', 'Where you are → where you could be'));
+
+  const idx = STAGES.indexOf(t.stage_display);
+  if (idx !== -1) {
+    const ladder = elem('div', 'ladder');
+    STAGES.forEach(function (s, i) {
+      let cls = 'ladder-step';
+      if (i === idx) cls += ' current';
+      else if (i === idx + 1) cls += ' next';
+      else if (i < idx) cls += ' done';
+      ladder.appendChild(elem('div', cls, s));
+    });
+    wrap.appendChild(ladder);
+    const next = STAGES[idx + 1];
+    wrap.appendChild(elem('div', 'ladder-label', next
+      ? 'You’re at “' + t.stage_display + '.” Next: “' + next + '.”'
+      : 'You’re at “' + t.stage_display + '” — the top. Keep compounding.'));
+  }
+
+  if (t.growth_horizon) {
+    const p = elem('p', 'gap-horizon');
+    appendTextWithLineBreaks(p, t.growth_horizon);
+    wrap.appendChild(p);
+  }
   return wrap;
 }
 
