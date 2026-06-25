@@ -100,6 +100,12 @@ SHAREABLE items (array; each is a teen-specific disclosure the teen can veto):
 - growth_area: the primary growth area as a behavior/skill, no character labels.
 - environmental: where lack of exposure, household financial transparency, restrictions, or opportunity may explain a result rather than the teen's ability or effort. Include this whenever it applies — it's the fairness principle made visible.
 
+SENSITIVE-DATA RULES — apply to EVERY shareable item `text` AND every `evidence_quote`:
+- NEVER include exact dollar amounts the teen holds, earns, or owes, account balances, account names, or specific investment positions. Speak to habits and direction, not figures (say "saves toward a target," never "$300 saved").
+- NEVER use a verbatim quote that describes family conflict, a parent/guardian's behavior, or financial hardship at home. If that context matters, summarize it neutrally in the item `text` with `evidence_quote: null` — never as a quote.
+- Anything touching safety (self-harm, abuse, crisis) is NEVER eligible for the parent report.
+- When in doubt, set `evidence_quote: null`. A quote is something the teen opts into, not a default.
+
 Also generate (not part of the vetoable list):
 - parent_action: ONE concrete, warm thing the parent can do this week to support the growth area — a real shared decision or conversation, never "lecture them" or "make them do X." It must NOT quote the teen or reveal their answers; keep it general parenting guidance tied to the skill. Examples: "Show them one real household bill and walk through the tradeoffs behind it — without quizzing them." / "Hand them one real decision with a real budget and let the result stand." / "Ask what part of money they'd want help with and what part they'd want to own." Honor the same minor-safety limits as the teen move.
 - growth_horizon: a calm, parent-facing "where they are now / where they could be" line that makes the gap clear without alarm. Name the current snapshot and the realistic next step the growth skill unlocks, framed as potential, not deficit. e.g. "Right now Maya is finding her footing on turning what she notices into action; with that one skill, she's well set up to start converting insight into self-started moves toward the direction she wants." This is the parent's version of the gap — current state, reachable next step, and that it's closable.

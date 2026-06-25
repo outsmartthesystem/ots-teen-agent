@@ -593,7 +593,7 @@ function mergeMoneyJudgmentIntoReport() {
 
 function buildMoneyJudgmentSection(mj) {
   const wrap = elem('div', 'mj-section');
-  wrap.appendChild(elem('div', 'mj-title', 'Money decisions — from your scenarios'));
+  wrap.appendChild(elem('div', 'mj-title', 'Money decision skills — from your scenarios'));
   if (mj.score != null) {
     const row = elem('div', 'bar-row');
     row.appendChild(elem('div', 'bar-label', 'Decisions'));
@@ -696,7 +696,9 @@ function renderPreview(draft) {
 }
 
 function buildPreviewItem(item) {
-  if (item.evidence_quote && item.includeQuote === undefined) item.includeQuote = true;
+  // Exact quotes default OFF — sharing your literal words is an affirmative opt-in,
+  // not a default (audit). The teen can flip "My exact words" on per item.
+  if (item.evidence_quote && item.includeQuote === undefined) item.includeQuote = false;
   const card = elem('div', 'pv-item');
   card.appendChild(elem('div', 'pv-cat', categoryLabel(item.category)));
   const textEl = elem('div', 'pv-text');
@@ -768,7 +770,7 @@ function categoryLabel(cat) {
     strength: 'A strength you showed',
     growth_area: 'A growth area',
     environmental: 'Context worth knowing',
-    money_judgment: 'Your money judgment',
+    money_judgment: 'Money decision skills',
     growth_horizon: 'Where you are → where you could be',
     confidence: 'How solid this read is',
     program_fit: 'How OTS could help'

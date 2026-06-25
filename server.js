@@ -107,6 +107,26 @@ function formatTranscript(turns, userLabel, asstLabel) {
     .join('\n\n———\n\n');
 }
 
+// Anti-hallucination: null out any teen/parent-facing evidence_quote that isn't
+// actually present in the transcript (audit: "verify every verbatim quote").
+function normForQuote(s) {
+  return String(s || '').toLowerCase().replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"').replace(/\s+/g, ' ').trim();
+}
+function quoteFound(quote, normTranscript) {
+  const q = normForQuote(quote);
+  if (q.length < 8) return true; // too short to verify meaningfully — leave it
+  return normTranscript.includes(q);
+}
+function stripUnverifiedQuotes(parsed, transcriptText) {
+  const norm = normForQuote(transcriptText);
+  let dropped = 0;
+  const ds = parsed.teen_output && parsed.teen_output.demonstrated_strength;
+  if (ds && ds.evidence_quote && !quoteFound(ds.evidence_quote, norm)) { ds.evidence_quote = null; dropped++; }
+  const items = parsed.parent_report_draft && parsed.parent_report_draft.shareable_items;
+  if (Array.isArray(items)) items.forEach(it => { if (it && it.evidence_quote && !quoteFound(it.evidence_quote, norm)) { it.evidence_quote = null; dropped++; } });
+  if (dropped) console.warn('[QUOTE_VERIFY] nulled ' + dropped + ' unverified quote(s)');
+}
+
 const INTERVIEW_SUB = (s) => SERVER_PROMPTS.A
   .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
   .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
@@ -447,6 +467,7 @@ app.post('/api/score', async (req, res) => {
       fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
       return res.json({ safety: flag });
     }
+    stripUnverifiedQuotes(parsed, transcript); // drop any quote not actually in the transcript
     await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true });
     sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     res.json({ result: parsed }); // no parent_email anywhere in the model output
@@ -514,7 +535,7 @@ const REPORT_CATEGORY_LABEL = {
   strength: 'A strength',
   growth_area: 'A growth area',
   environmental: 'Context worth knowing',
-  money_judgment: 'Money decisions',
+  money_judgment: 'Money decision skills',
   growth_horizon: 'Where they are, and where they could be',
   confidence: 'How solid this read is',
   program_fit: 'How OTS could help',
