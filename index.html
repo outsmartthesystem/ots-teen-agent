@@ -77,6 +77,35 @@
     .partial-note { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
     .result-h1 { font-size: 24px; margin: 0 0 14px; }
     .mirror { font-size: 17px; color: var(--accent-2); border-left: 3px solid var(--accent); padding-left: 14px; margin: 0 0 22px; }
+    /* Your System Map — branded journey layout */
+    .system-map { margin: 6px 0 24px; }
+    .sm-header { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; }
+    .sm-compass { width: 36px; height: 36px; flex: none; }
+    .sm-title { font-size: 13px; text-transform: uppercase; letter-spacing: .09em; color: var(--accent-2); font-weight: 700; }
+    .sm-stations { position: relative; padding-left: 30px; }
+    .sm-stations::before { content: ''; position: absolute; left: 11px; top: 6px; bottom: 14px; width: 2px; background: linear-gradient(var(--accent), var(--accent-2)); border-radius: 2px; }
+    .sm-station { position: relative; margin: 0 0 20px; }
+    .sm-station:last-child { margin-bottom: 0; }
+    .sm-dot { position: absolute; left: -30px; top: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--accent-2); font-weight: 700; }
+    .sm-star .sm-dot { border-color: var(--warn); color: var(--warn); }
+    .sm-move .sm-dot { border-color: var(--good); color: var(--good); }
+    .sm-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 2px 0 4px; }
+    .sm-text { color: var(--text); font-size: 15px; }
+    .sm-star .sm-text { font-size: 17px; color: var(--accent-2); }
+    .sm-quote { margin-top: 7px; font-style: italic; color: var(--muted); border-left: 2px solid var(--line); padding-left: 11px; font-size: 14px; }
+    /* "Does this feel true?" accuracy check */
+    .accuracy-check { margin: 24px 0; padding: 16px 18px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
+    .ac-q { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
+    .ac-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ac-btn { background: transparent; border: 1px solid var(--line); color: var(--text); font-family: inherit; font-size: 14px; padding: 8px 16px; border-radius: 999px; cursor: pointer; }
+    .ac-btn:hover { border-color: var(--accent); }
+    .ac-btn.sel { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .ac-followup { margin-top: 12px; }
+    .ac-fu-label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+    .ac-fu-ok { font-size: 14px; color: var(--good); }
+    .ac-input { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; color: var(--text); font-family: inherit; font-size: 14px; padding: 9px 11px; resize: vertical; box-sizing: border-box; }
+    .ac-refine { margin-top: 10px; }
+    .ac-err { margin-top: 8px; font-size: 13px; color: var(--danger); }
     .confidence-note { font-size: 13px; color: var(--muted); margin: 0 0 22px; }
     .gap-section { margin: 0 0 24px; padding: 16px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
     .gap-title { font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-2); margin-bottom: 12px; }
@@ -131,7 +160,15 @@
     .solo-note { margin: 12px 0 0; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; font-size: 13.5px; color: var(--text); }
     .choice-card.primary { border-color: var(--accent); background: #0e1830; }
     .next-note { margin-top: 24px; padding: 12px 14px; background: var(--panel-2); border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 13px; }
-    @media (max-width: 480px) { .choice { grid-template-columns: 1fr; } .bar-row { grid-template-columns: 104px 1fr 20px; } }
+    @media (max-width: 480px) {
+      .choice { grid-template-columns: 1fr; }
+      /* Stack so the qualitative label (e.g. "Systemized") has room instead of
+         being crushed into a tiny column. Label + value on top, bar below. */
+      .bar-row { grid-template-columns: 1fr auto; grid-template-areas: "label score" "track track"; row-gap: 5px; }
+      .bar-label { grid-area: label; }
+      .bar-track { grid-area: track; }
+      .bar-score { grid-area: score; text-align: right; }
+    }
 
     /* Preview / veto screen */
     #screen-preview, #screen-sent { overflow-y: auto; align-items: flex-start; padding: 32px 16px; }

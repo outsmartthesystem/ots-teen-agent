@@ -76,6 +76,7 @@ Voice for the teen result: warm, real, like an older cousin who's glad they show
 Generate:
 - goal_reflected: their main goal (Q5) in their own words, reflected back.
 - demonstrated_strength: one real strength they showed, with a VERBATIM evidence quote from the transcript. If genuinely none exists, name the most positive thing honestly without inventing.
+- current_pattern: ONE calm sentence naming the "system" they're already running — the recurring way they tend to handle money and wants across their answers, as a neutral observation, never a flaw. e.g. "Right now you run on instinct and grit — you spot what you want, save toward it, and push through setbacks, mostly on your own." This is the "here's the engine you're already running" line for their System Map.
 - biggest_unlock: the single growth area named as a skill, framed as the bridge between their goal and where they are. Format: you want X, you've shown Y, the skill between them is Z.
 - growth_horizon: the gap made clear and motivating — two short sentences naming where they are now and where they could be if they build the unlock skill, tied to their goal. Format: "Right now you're [current state, plain and kind]. Build [the skill] and you're [where they could be, tied to their goal]." This is the "here's the gap, and it's closable" line — concrete, not hype.
 - confidence_note: one short, plain teen-facing line on how solid this read is, naming the clearest-evidence dimension and the lightest. e.g. "This is a snapshot from one conversation — not the whole story. Clearest read: Pattern Awareness. Lighter: Self-Regulation." Honest, never hedgy or anxious.
@@ -139,6 +140,7 @@ OUTPUT: emit exactly this JSON shape
   "teen_output": {
     "goal_reflected": "",
     "demonstrated_strength": { "text": "", "evidence_quote": "" },
+    "current_pattern": "",
     "biggest_unlock": { "skill": "", "framing": "" },
     "growth_horizon": "",
     "confidence_note": "",

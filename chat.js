@@ -408,40 +408,11 @@ function renderResult(parsed) {
   root.innerHTML = '';
   const name = window.session.teen_first_name;
 
-  // Reordered so the teen feels UNDERSTOOD before EVALUATED — goal, strength,
-  // unlock, and the move come first; the stage/bars/evidence are support below.
-
-  // 1) Their goal, reflected back.
-  root.appendChild(elem('h1', 'result-h1', name + ", here's where you are"));
-  if (t.goal_reflected) {
-    const m = elem('p', 'mirror');
-    appendTextWithLineBreaks(m, t.goal_reflected);
-    root.appendChild(m);
-  }
-
-  // 2) What you've already got (strength + verbatim quote).
-  const strength = t.demonstrated_strength;
-  if (strength && strength.text) {
-    const sec = section('What you’ve already got');
-    sec.appendChild(para(strength.text));
-    if (strength.evidence_quote) sec.appendChild(elem('blockquote', 'evidence', '“' + strength.evidence_quote + '”'));
-    root.appendChild(sec);
-  }
-
-  // 3) Biggest unlock.
-  const unlock = t.biggest_unlock;
-  if (unlock && (unlock.skill || unlock.framing)) {
-    const sec = section('Your biggest unlock' + (unlock.skill ? ': ' + unlock.skill : ''));
-    if (unlock.framing) sec.appendChild(para(unlock.framing));
-    root.appendChild(sec);
-  }
-
-  // 4) Seven-day move.
-  if (t.seven_day_move) {
-    const sec = section('This week', 'move');
-    sec.appendChild(para(t.seven_day_move));
-    root.appendChild(sec);
-  }
+  // 1) Your System Map — the branded heart of the result: North Star → what's
+  //    already working → the system you're running → friction → lever → 7-day
+  //    move. The teen feels UNDERSTOOD before being EVALUATED (stage/bars below).
+  root.appendChild(elem('h1', 'result-h1', name + ', here’s where you are'));
+  root.appendChild(buildSystemMap(t));
 
   // 5) The evidence behind it — stage, confidence, the dimension map. Placed
   //    AFTER the narrative so it reads as support, not a report card. Bars show
@@ -500,6 +471,10 @@ function renderResult(parsed) {
     root.appendChild(panel);
   }
 
+  // 9b) Accuracy check — "Does this feel true?" The teen can confirm or correct
+  //     the read before anything is shared; a correction re-reads the result.
+  root.appendChild(buildAccuracyCheck());
+
   // 10) Save-as-PDF keepsake.
   const pdfBtn = elem('button', 'btn btn-ghost result-pdf', '⤓  Save my result as a PDF');
   pdfBtn.addEventListener('click', downloadResultPDF);
@@ -516,6 +491,104 @@ function renderResult(parsed) {
   }
 
   scrollResultTop();
+}
+
+// ─── YOUR SYSTEM MAP (branded result heart) ──────────────────────────────
+const COMPASS_SVG =
+  '<svg class="sm-compass" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+  '<circle cx="20" cy="20" r="17" fill="none" stroke="var(--accent)" stroke-width="2"/>' +
+  '<path d="M20 5 L24 20 L20 35 L16 20 Z" fill="var(--accent-2)"/>' +
+  '<path d="M5 20 L20 16 L35 20 L20 24 Z" fill="var(--accent)" opacity="0.55"/>' +
+  '<circle cx="20" cy="20" r="2.6" fill="#fff"/></svg>';
+
+function buildSystemMap(t) {
+  const map = elem('div', 'system-map');
+  const header = elem('div', 'sm-header');
+  header.innerHTML = COMPASS_SVG; // static brand glyph (no user text)
+  header.appendChild(elem('div', 'sm-title', 'Your System Map'));
+  map.appendChild(header);
+
+  const stations = elem('div', 'sm-stations');
+  const station = (icon, label, text, extraClass, quote) => {
+    if (!text) return;
+    const s = elem('div', 'sm-station' + (extraClass ? ' ' + extraClass : ''));
+    s.appendChild(elem('div', 'sm-dot', icon));
+    s.appendChild(elem('div', 'sm-label', label));
+    const tx = elem('div', 'sm-text'); appendTextWithLineBreaks(tx, text); s.appendChild(tx);
+    if (quote) s.appendChild(elem('div', 'sm-quote', '“' + quote + '”'));
+    stations.appendChild(s);
+  };
+
+  const str = t.demonstrated_strength || {};
+  const unlock = t.biggest_unlock || {};
+  station('★', 'Your North Star', t.goal_reflected, 'sm-star');
+  station('✓', 'What’s already working', str.text, null, str.evidence_quote || null);
+  station('⚙', 'The system you’re running', t.current_pattern);
+  if (unlock.skill) station('!', 'The friction', 'The one skill slowing your momentum right now: ' + unlock.skill + '.');
+  station('▲', 'The lever', unlock.framing);
+  station('→', 'Your 7-day move', t.seven_day_move, 'sm-move');
+  map.appendChild(stations);
+  return map;
+}
+
+// ─── "DOES THIS FEEL TRUE?" accuracy check ───────────────────────────────
+// The teen confirms or corrects the read before sharing. "Not really" opens a
+// one-line correction that re-reads the result (server re-scores with it in mind)
+// — so a parent report is never built from a read the teen says is plainly wrong.
+function buildAccuracyCheck() {
+  const wrap = elem('div', 'accuracy-check'); wrap.id = 'accuracyCheck';
+  wrap.appendChild(elem('div', 'ac-q', 'Does this feel true?'));
+  const btns = elem('div', 'ac-btns');
+  ['Yes', 'Mostly', 'Not really'].forEach(label => {
+    const b = elem('button', 'ac-btn', label);
+    b.addEventListener('click', () => handleAccuracy(label, wrap));
+    btns.appendChild(b);
+  });
+  wrap.appendChild(btns);
+  return wrap;
+}
+
+function handleAccuracy(answer, wrap) {
+  window.accuracyAnswer = answer;
+  wrap.querySelectorAll('.ac-btn').forEach(b => b.classList.toggle('sel', b.textContent === answer));
+  const old = wrap.querySelector('.ac-followup'); if (old) old.remove();
+  const fu = elem('div', 'ac-followup');
+  if (answer === 'Not really') {
+    fu.appendChild(elem('div', 'ac-fu-label', 'What did I miss? A line or two — I’ll re-read with that in mind.'));
+    const ta = document.createElement('textarea');
+    ta.className = 'ac-input'; ta.id = 'acInput'; ta.rows = 2;
+    ta.placeholder = 'e.g. “the goal is actually X, not Y,” or “I’m way more cautious than this says”';
+    fu.appendChild(ta);
+    const rb = elem('button', 'btn btn-primary ac-refine', 'Refine my result →');
+    rb.addEventListener('click', () => refineResult(ta.value));
+    fu.appendChild(rb);
+  } else {
+    fu.appendChild(elem('div', 'ac-fu-ok', answer === 'Yes' ? 'Love it — that’s yours.' : 'Good — close enough to be useful.'));
+  }
+  wrap.appendChild(fu);
+}
+
+async function refineResult(correction) {
+  const text = (correction || '').trim();
+  if (!text) return;
+  const rb = document.querySelector('.ac-refine');
+  if (rb) { rb.disabled = true; rb.textContent = 'Re-reading…'; }
+  try {
+    const r = await fetch('/api/score/refine', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correction: text })
+    });
+    const data = await r.json();
+    if (!r.ok || !data.result) throw new Error((data && data.error) || 'refine failed');
+    window.scoringResult = data.result;
+    window.accuracyAnswer = null;
+    renderResult(data.result);
+  } catch (e) {
+    if (rb) { rb.disabled = false; rb.textContent = 'Refine my result →'; }
+    const wrap = document.getElementById('accuracyCheck');
+    if (wrap) wrap.appendChild(elem('div', 'ac-err', 'Couldn’t refine just now — your result is unchanged. Try again in a moment.'));
+    console.error('refine error:', e);
+  }
 }
 
 // ─── SKILLS CHECK (optional scenario layer) ──────────────────────────────

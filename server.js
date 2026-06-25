@@ -481,6 +481,47 @@ app.post('/api/score', async (req, res) => {
   }
 });
 
+// ─── REFINE ("Does this feel true?" → Not really) ──────────────────────────
+// Re-score the SAME stored transcript with the teen's correction in mind, so a
+// read the teen says is wrong gets corrected before any parent report is built.
+app.post('/api/score/refine', async (req, res) => {
+  const session = await currentSession(req);
+  if (!session) return res.status(401).json({ error: 'no active session' });
+  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
+  if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.B) return res.status(500).json({ error: 'scoring not configured' });
+  if (!session.interview_complete) return res.status(409).json({ error: 'interview not complete' });
+  const storedI = (session.turns && Array.isArray(session.turns.interview)) ? session.turns.interview : null;
+  if (!storedI || !storedI.length) return res.status(409).json({ error: 'no interview transcript' });
+  const correction = (req.body && typeof req.body.correction === 'string') ? req.body.correction.trim().slice(0, 1000) : '';
+  if (!correction) return res.status(400).json({ error: 'correction required' });
+
+  const baseTranscript = formatTranscript(storedI, 'TEEN', 'INTERVIEWER');
+  const transcript = baseTranscript + '\n\n———\n\nTEEN (reviewing their result):\nThe first read missed something. Re-read the whole conversation with this correction in mind, and adjust the result: ' + correction;
+  const system = SERVER_PROMPTS.B.split('{{TEEN_AGE}}').join(String(session.teen_age));
+  try {
+    let parsed = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const text = await callAnthropic({ model: 'claude-opus-4-8', system, messages: [{ role: 'user', content: transcript }], max_tokens: 4000 });
+      const c = parseScoringJSON(text);
+      if (c && validateScoring(c)) { parsed = c; break; }
+    }
+    if (!parsed) return res.status(502).json({ error: 'could not refine' });
+    if (parsed.safety_check && parsed.safety_check.clear === false) {
+      const flag = String(parsed.safety_check.flag || 'DISTRESS').toUpperCase();
+      if (SAFETY_BLOCK_FLAGS.has(flag)) await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag });
+      fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
+      return res.json({ safety: flag });
+    }
+    stripUnverifiedQuotes(parsed, baseTranscript); // verify quotes against the REAL transcript, not the correction
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {} });
+    sendArchiveEmail(session, 'refined assessment', transcript, parsed);
+    res.json({ result: parsed });
+  } catch (e) {
+    console.error('refine error:', e.message);
+    res.status(502).json({ error: 'refine error' });
+  }
+});
+
 // ─── SKILLS SCORE (Prompt D, server-side) ──────────────────────────────────
 app.post('/api/skills-score', async (req, res) => {
   const session = await currentSession(req);
