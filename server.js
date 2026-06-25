@@ -24,7 +24,8 @@ async function callAnthropic({ model, system, messages, max_tokens }) {
     r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: Math.min(max_tokens || 4000, 8000), system, messages })
+      body: JSON.stringify({ model, max_tokens: Math.min(max_tokens || 4000, 8000), system, messages }),
+      timeout: 60000 // bound a stalled upstream so the teen never waits forever
     });
     if ((r.status === 429 || r.status === 529) && attempt < 3) { await wait(attempt * 3000); continue; }
     break;
@@ -230,54 +231,26 @@ app.use('/api/', (req, res, next) => {
   next();
 });
 
-// ============================================================================
-// SESSION-TOKEN CONTRACT  (parent → teen handoff)
-// ============================================================================
-// The parent registers; the server mints a stateless, HMAC-signed token that
-// encodes the registration. The teen opens /?t=<token>. No database required —
-// the token IS the session.
-//
-// Signed payload (never trust any of this from the client once minted):
-//   { v, sid, teen_first_name, teen_age, parent_first_name, parent_email, iat, exp }
-//
-// Token string:  base64url(JSON payload) + "." + base64url(HMAC-SHA256)
-//
-// SAFETY/PRIVACY PROPERTIES BAKED INTO THE CONTRACT:
-//   1. The teen-facing read (/api/session) NEVER returns parent_email. The
-//      report destination is server-side only — a teen can't see or change it.
-//   2. The parent-report send (/api/parent-report) pulls parent_email from the
-//      *verified token*, never from the request body. A teen cannot redirect
-//      the report to a different address by tampering with the client.
-//   3. teen_age is signed, so the age-banding in scoring can't be spoofed.
-// ============================================================================
+// Fail closed: if the durable store was configured but did not initialize (e.g.
+// DATABASE_URL set but Postgres unreachable), refuse API traffic rather than
+// silently running on a broken/missing store. Health stays reachable so the
+// problem is visible. (audit P2)
+app.use('/api/', (req, res, next) => {
+  if ((req.originalUrl || '').split('?')[0] === '/api/health') return next();
+  if (!db.ready()) return res.status(503).json({ error: 'service unavailable: data store not ready' });
+  next();
+});
 
-const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days from registration
-
-function signToken(payloadObj) {
-  const secret = process.env.TOKEN_SIGNING_SECRET;
-  const body = Buffer.from(JSON.stringify(payloadObj)).toString('base64url');
-  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-  return `${body}.${sig}`;
-}
-
-function verifyToken(token) {
-  if (!process.env.TOKEN_SIGNING_SECRET) return null;
-  if (!token || typeof token !== 'string' || token.indexOf('.') === -1) return null;
-  const [body, sig] = token.split('.');
-  if (!body || !sig) return null;
-  const expected = crypto.createHmac('sha256', process.env.TOKEN_SIGNING_SECRET).update(body).digest('base64url');
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  let payload;
-  try {
-    payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
-  } catch {
-    return null;
-  }
-  if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) return null;
-  return payload;
-}
+// ============================================================================
+// SESSIONS  (parent → teen handoff)
+// ============================================================================
+// Phase 1+4 replaced the old stateless HMAC token with OPAQUE server-side
+// sessions: the parent registers, the server stores a session row and returns a
+// one-use ?s=<random-id> link; /api/session/start exchanges it for an HttpOnly
+// cookie (cookie helpers above). parent_email lives only in the row and is never
+// returned to the teen; report destination and content are server-side only.
+// The old signToken/verifyToken/TOKEN_SIGNING_SECRET code was removed here.
+// ============================================================================
 
 // Teen-facing session fields. parent_email is NEVER returned — it lives only in
 // the server-side row and is read directly from there when the report sends.
@@ -602,7 +575,6 @@ app.post('/api/parent-report', async (req, res) => {
   // session sends at most once — regardless of what a modified client claims.
   // The 200 shape mirrors success so a probing client learns nothing.
   if (s.safety_blocked) { console.warn('[PARENT_REPORT_BLOCKED] safety sid=' + s.id); return res.json({ success: true }); }
-  if (s.report_sent) { console.warn('[PARENT_REPORT_DUP] already sent sid=' + s.id); return res.json({ success: true }); }
 
   const webhook = process.env.TEEN_MAKE_WEBHOOK_URL;
   if (!webhook) return res.status(500).json({ error: 'Server not configured: TEEN_MAKE_WEBHOOK_URL missing' });
@@ -639,25 +611,26 @@ app.post('/api/parent-report', async (req, res) => {
 
   const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null, parent_action: draft.parent_action || '' };
 
-  // Mark sent BEFORE the network call so a concurrent retry can't double-send.
-  await db.updateSession(s.id, { report_sent: true });
+  // ATOMIC one-time claim: exactly one caller wins; concurrent/repeat callers and
+  // safety-blocked sessions get false (no double-send race). (audit P2)
+  const claimed = await db.claimReportSend(s.id);
+  if (!claimed) { console.warn('[PARENT_REPORT_DUP_OR_BLOCKED] sid=' + s.id); return res.json({ success: true }); }
 
   const email = buildParentEmail(approved, s.teen_first_name, s.parent_first_name);
+  // Data minimization: send ONLY what the Make scenario uses to deliver the email
+  // (no duplicate structured report, no plaintext copy) — less teen data at rest in Make.
   const out = {
     auth: process.env.MAKE_SHARED_SECRET || '', // gates the Make webhook
     sid: s.id,
     parent_email: s.parent_email,               // from the server-side row only
     parent_first_name: s.parent_first_name,
     teen_first_name: s.teen_first_name,
-    teen_age: s.teen_age,
     email_subject: email.subject,
     email_html: email.html,
-    email_text: email.text,
-    approved_report: approved,
     sent_at: new Date().toISOString()
   };
   try {
-    const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) });
+    const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out), timeout: 15000 });
     if (!r.ok) {
       console.error('Parent-report webhook non-OK:', r.status);
       await db.updateSession(s.id, { report_sent: false }); // allow a retry
@@ -834,7 +807,7 @@ app.get('/api/health', (req, res) => {
     teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
     make_secret: !!process.env.MAKE_SHARED_SECRET,
     safety_email: !!safetyMailer,
-    durable_db: db.backend() === 'postgres'   // in-memory is dev-only, not launch-ready
+    durable_db: db.backend() === 'postgres' && db.ready()   // configured AND actually initialized
   };
   const missing = Object.keys(configured).filter(k => !configured[k]);
   // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready.
@@ -854,5 +827,5 @@ app.use(express.static(path.join(__dirname)));
 const PORT = process.env.PORT || 3000;
 db.init()
   .then(() => console.log('session store ready:', db.backend()))
-  .catch(e => console.error('db.init error (continuing):', e.message))
-  .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()})`)));
+  .catch(e => console.error('[DB_INIT_FAILED] data store unreachable — API will FAIL CLOSED (503) until it recovers:', e.message))
+  .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()}, ready: ${db.ready()})`)));

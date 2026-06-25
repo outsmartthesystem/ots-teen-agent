@@ -20,8 +20,9 @@ if (USE_PG) {
   pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl, max: 5 });
 }
 
+let initialized = false;
 async function init() {
-  if (!pool) return;
+  if (!pool) { initialized = true; return; }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sessions (
       id                 TEXT PRIMARY KEY,
@@ -40,7 +41,10 @@ async function init() {
     )`);
   // Phase 4: server-held interview/skills transcript. Migration for existing tables.
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS turns JSONB`);
+  initialized = true;
 }
+// Fail-closed readiness: a configured-but-uninitialized Postgres is NOT ready.
+function ready() { return initialized; }
 
 async function createSession(s) {
   if (pool) {
@@ -90,6 +94,23 @@ async function updateSession(id, fields) {
   }
 }
 
+// Atomically claim the one-and-only send for a session. Returns true to exactly
+// one caller; concurrent or repeat callers, or a safety-blocked session, get
+// false. Replaces the check-then-set race in /api/parent-report (audit P2).
+async function claimReportSend(id) {
+  if (!id) return false;
+  if (pool) {
+    const r = await pool.query(
+      `UPDATE sessions SET report_sent = true
+       WHERE id = $1 AND report_sent = false AND safety_blocked = false
+       RETURNING id`, [id]);
+    return r.rowCount === 1;
+  }
+  const row = mem.get(id);
+  if (row && !row.report_sent && !row.safety_blocked) { row.report_sent = true; return true; }
+  return false;
+}
+
 function backend() { return pool ? 'postgres' : 'memory'; }
 
-module.exports = { init, createSession, getSession, updateSession, backend };
+module.exports = { init, ready, createSession, getSession, updateSession, claimReportSend, backend };

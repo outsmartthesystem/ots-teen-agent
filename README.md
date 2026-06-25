@@ -5,10 +5,12 @@ interview that shows a teen where they are on five money dimensions, names the g
 between where they are and where they want to be, and produces two outputs: a warm
 result for the **teen** and a separate, **teen-approved** report for the **parent**.
 
-Architecturally it forks the `ots-deep-work` skeleton (Express on Render, `/api/chat`
-Anthropic proxy, rate limiting, static-file security) but diverges in the model layer:
-a **four-prompt** flow — A (interview) → B (scoring), plus an optional C (money-decision
-scenarios) → D (scenario scoring) — four safety sentinels, a preview/veto gate before
+Architecturally it forks the `ots-deep-work` skeleton (Express on Render, rate limiting,
+static-file security) but diverges sharply: the interview, scoring, and safety all run
+**server-side**. A **four-prompt** flow — A (interview) → B (scoring), plus an optional
+C (money-decision scenarios) → D (scenario scoring) — runs entirely on the server (the
+browser sends only the teen's answer), behind opaque server-side sessions (Postgres)
+with HttpOnly-cookie auth. Plus four safety sentinels, a preview/veto gate before
 anything reaches the parent, server-side safety routing (direct email alerts), and the
 teen agent's **own** Make webhook.
 
@@ -60,7 +62,8 @@ responder) **is built and live-verified**. The remaining launch gate is the
 (opaque server-side sessions). See **Roadmap** below.
 
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
-regenerates `prompts.js` (the runtime copy the frontend loads).
+regenerates `prompts.js`, which the **server** loads. Phase 4: the prompts are no
+longer sent to the browser, and `/prompts.js` + `/prompts/` are not served over HTTP.
 
 ## Run locally
 
@@ -81,32 +84,42 @@ link; opening it boots the interview at `/`. That's the full entry round trip.
 > copy the app to an off-Drive folder first, or accept one slow install. Don't try
 > to commit or delete `node_modules` while Drive is mid-sync.
 
-## The session-token contract (locked)
+## Session architecture (opaque server-side sessions)
 
-The parent registers; the server mints a **stateless, HMAC-signed** token that
-encodes the registration. The teen opens `/?t=<token>`. No database — the token is
-the session.
+The parent registers; the server creates an **opaque** session row (Postgres) and
+returns a one-use link `/?s=<random-id>`. The teen opens it; the server exchanges the
+id for an **HttpOnly** cookie and strips the id from the address bar. That cookie — not
+any client-held token — authenticates every request. The interview transcript and the
+scored draft live in the session row **server-side**; the browser holds nothing durable.
 
 | Endpoint | Who | Purpose |
 |---|---|---|
-| `POST /api/register` | parent (registration page) | validate input → return `{ token, teen_url }` |
-| `GET /api/session?t=` | teen (interview page) | verify → return teen-safe fields for Prompt A |
-| `POST /api/chat` | both | Anthropic proxy for Prompt A turns **and** the Prompt B scoring call |
-| `POST /api/parent-report` | teen (after veto) | verify → forward approved report to the teen Make webhook |
-| `GET /api/health` | ops | liveness + which env vars are set |
+| `POST /api/register` | parent | validate → create session → return `{ teen_url }` (opaque `?s=` link) |
+| `POST /api/session/start` | teen (first open) | exchange the `?s=` id for the HttpOnly cookie → teen-safe fields |
+| `GET /api/session` | teen (reload) | re-establish teen-safe fields from the cookie |
+| `POST /api/interview/turn` | teen | one interview turn — sends only `{ answer }`; server owns Prompt A + the transcript + the per-turn anchor |
+| `POST /api/skills/turn` | teen | one money-decision-scenario turn (Prompt C) |
+| `GET /api/interview/state` | teen (resume) | the stored transcript, to rebuild the chat on reload |
+| `POST /api/score` · `/api/skills-score` | teen | server scores its **own** completed stored transcript (no client transcript) |
+| `POST /api/parent-report` | teen (after veto) | build the email from the stored draft + the teen's selections; one-time + atomic |
+| `POST /api/session/end` | teen | clear the cookie + purge the transcript ("End & clear this device") |
+| `GET /api/health` | ops | liveness + readiness (`ready`, `db`, `durable_db`, `archive_recording`) |
 
-**Signed payload:** `{ v, sid, teen_first_name, teen_age, parent_first_name, parent_email, iat, exp }`
-(30-day TTL). **Token:** `base64url(payload) + "." + base64url(HMAC-SHA256(secret, payload))`.
+There is **no** `/api/chat` proxy and **no** client-held token — both were removed in
+Phase 4. `/api/session` returns only `teen_first_name`, `teen_age`, `teen_age_plus_3`
+(pre-computed — the model is unreliable at arithmetic), `parent_first_name`, and status
+flags; never `parent_email`.
 
-**`/api/session` returns only** `teen_first_name`, `teen_age`, `teen_age_plus_3`
-(pre-computed — the model is unreliable at arithmetic), and `parent_first_name`.
+### Safety/privacy properties
 
-### Safety/privacy properties baked into the contract
-
-1. **The teen never sees the parent's email.** `/api/session` omits `parent_email`.
-2. **The teen can't redirect the report.** `/api/parent-report` reads `parent_email`
-   from the *verified token*, never from the request body.
-3. **Age can't be spoofed.** `teen_age` is signed, so scoring's age-banding is trustworthy.
+1. **The teen never sees the parent's email** — it lives only in the server row.
+2. **The teen can't redirect or forge the report** — destination and content both come
+   from the server-side row, never the request body; sending is one-time and atomic.
+3. **Prompts and transcript aren't on the device or tamperable** — the server holds
+   them, and scoring runs on the server's own stored transcript (a completed interview
+   is required; there is no client-transcript path).
+4. **Safety disclosures never reach the parent** — CRISIS/ABUSE end the session, purge
+   the transcript, and alert a responder with no teen quotes.
 
 ## Environment
 
@@ -114,12 +127,13 @@ See `.env.example`. Full var list:
 
 | Var | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | powers `/api/chat` (interview + scoring) |
-| `TOKEN_SIGNING_SECRET` | signs/verifies session tokens |
+| `ANTHROPIC_API_KEY` | powers the server-side interview + scoring calls |
+| `DATABASE_URL` | Postgres (Render Internal URL) for durable opaque sessions; without it the app runs a NON-durable in-memory store (dev only) and `/api/health` reports `ready:false` |
 | `TEEN_MAKE_WEBHOOK_URL` | the teen agent's **own** Make webhook for the parent report — do **not** reuse the deep-work / Family Money Story webhook |
 | `MAKE_SHARED_SECRET` | sent as `auth` in the parent-report body; the Make scenario filters on it so the webhook isn't an open email relay |
-| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts |
+| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts (and, in the test phase, session archives) |
 | `SAFETY_ALERT_TO` | where CRISIS/ABUSE alerts go (defaults to `EMAIL_USER`) |
+| `ARCHIVE_EMAIL_TO` | **test phase only**: a full session record (transcript + assessment) is emailed here; clearing it disables recording |
 | `PUBLIC_BASE_URL` | optional; base for the teen link (else derived from request host) |
 
 ## Deploy (Render)
@@ -161,7 +175,7 @@ parent-report webhook is secret-gated (forged direct POSTs are filtered out), an
    + a Make-side filter (forged direct POSTs are dropped). Both live-verified.
 9. ✅ Custom domain **https://teen.outsmartthesystem.org** (CNAME → Render, TLS
    issued); bare root redirects to `/register.html`. Plus a one-click teen-result
-   **PDF** download (html2pdf, light-themed keepsake).
+   **PDF** download (jsPDF, text-drawn, light-themed keepsake).
 
 The prompts themselves live in `prompts/` once added (Prompt A = interview, Prompt B
 = scoring); both are designed and version-locked at build v4.
