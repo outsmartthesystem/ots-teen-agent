@@ -114,26 +114,6 @@
     .pv-error { margin-top: 12px; color: var(--danger); font-size: 13px; }
     .result-cta { margin-top: 24px; width: 100%; }
     .result-pdf { width: 100%; margin-top: 16px; }
-
-    /* Result PDF — light theme, rendered off-screen by html2pdf */
-    #pdfHolder { position: absolute; left: -10000px; top: 0; width: 720px; }
-    .pdf-doc { background: #fff; color: #1a1a1a; width: 720px; padding: 42px 46px; font-family: Georgia, "Times New Roman", serif; }
-    .pdf-eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #2f6df0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .pdf-name { font-size: 30px; font-weight: 700; margin: 6px 0 8px; }
-    .pdf-stage { display: inline-block; font-size: 13px; font-weight: 700; color: #0c2a1c; background: #cdeede; padding: 3px 12px; border-radius: 999px; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .pdf-goal { font-size: 17px; color: #2f4a7a; border-left: 3px solid #2f6df0; padding-left: 14px; margin: 18px 0 22px; }
-    .pdf-bars { margin: 6px 0 22px; }
-    .pdf-bar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .pdf-bar-label { width: 140px; font-size: 13px; color: #555; }
-    .pdf-bar-track { flex: 1; height: 9px; background: #ececec; border-radius: 5px; overflow: hidden; }
-    .pdf-bar-fill { height: 100%; background: linear-gradient(90deg, #2f6df0, #6fd3a0); }
-    .pdf-bar-score { width: 18px; text-align: right; font-size: 13px; font-weight: 700; }
-    .pdf-section { margin: 0 0 18px; }
-    .pdf-section h3 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: #777; margin: 0 0 6px; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
-    .pdf-section p { margin: 0; font-size: 15px; line-height: 1.55; }
-    .pdf-quote { font-style: italic; color: #333; border-left: 3px solid #6fd3a0; padding-left: 12px; margin-top: 8px !important; }
-    .pdf-move { background: #f4f8f5; border: 1px solid #d8ece0; border-radius: 10px; padding: 14px 16px; }
-    .pdf-footer { margin-top: 26px; padding-top: 14px; border-top: 1px solid #e5e5e5; font-size: 12px; color: #999; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
     .err-box { background: #2a1416; border: 1px solid #5a2730; color: var(--danger); padding: 16px; border-radius: 10px; }
     .spinner { width: 26px; height: 26px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 14px; }
 
@@ -205,10 +185,7 @@
     <div class="card" id="sentBody"></div>
   </div>
 
-  <!-- off-screen container rendered only when building the result PDF -->
-  <div id="pdfHolder" aria-hidden="true"></div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="vendor/jspdf.umd.min.js"></script>
   <script src="prompts.js"></script>
   <script src="chat.js"></script>
 </body>

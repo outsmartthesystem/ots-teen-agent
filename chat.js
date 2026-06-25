@@ -639,70 +639,92 @@ function scrollResultTop() {
   if (s) s.scrollTop = 0;
 }
 
-// ─── RESULT PDF (light-themed keepsake) ──────────────────────────────────
+// ─── RESULT PDF ──────────────────────────────────────────────────────────
+// Drawn directly with jsPDF (vendored locally, no CDN). No html2canvas/DOM
+// rasterization — that approach hung the main thread on some browsers and the
+// window.print() fallback froze the tab. This is synchronous, fast, and crisp.
 function downloadResultPDF() {
-  const holder = document.getElementById('pdfHolder');
-  if (!holder) return;
-  holder.innerHTML = buildResultPdfHtml();
-  const node = holder.firstElementChild;
-  const safeName = (window.session.teen_first_name || 'result').replace(/[^a-z0-9]/gi, '') || 'result';
-  if (typeof html2pdf === 'undefined') { window.print(); return; } // CDN blocked → browser print dialog
-  const opt = {
-    margin: 0,
-    filename: 'OTS-Teen-Check-' + safeName + '.pdf',
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, backgroundColor: '#ffffff' },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['css', 'legacy'] }
-  };
-  const cleanup = () => { holder.innerHTML = ''; };
-  html2pdf().set(opt).from(node).save().then(cleanup, cleanup);
+  const btn = document.querySelector('.result-pdf');
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    console.error('jsPDF not loaded');
+    if (btn) btn.textContent = 'PDF unavailable — reload the page';
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+  try {
+    const safeName = (window.session.teen_first_name || 'result').replace(/[^a-z0-9]/gi, '') || 'result';
+    buildResultPdfDoc().save('OTS-Teen-Check-' + safeName + '.pdf');
+    if (btn) { btn.disabled = false; btn.textContent = '⤓  Save my result as a PDF'; }
+  } catch (e) {
+    console.error('PDF error:', e);
+    if (btn) { btn.disabled = false; btn.textContent = 'Couldn’t make the PDF — try again'; }
+  }
 }
 
-function buildResultPdfHtml() {
+function buildResultPdfDoc() {
   const t = (window.scoringResult && window.scoringResult.teen_output) || {};
-  const name = escHtml(window.session.teen_first_name);
-  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const bars = (t.bars || []).map(pdfBar).join('');
-  let h = '<div class="pdf-doc">';
-  h += '<div class="pdf-eyebrow">Outsmart the System &middot; Teen Check</div>';
-  h += '<div class="pdf-name">' + name + '</div>';
-  if (t.stage_display) h += '<span class="pdf-stage">' + escHtml(t.stage_display) + '</span>';
-  if (t.goal_reflected) h += '<p class="pdf-goal">' + escHtml(t.goal_reflected) + '</p>';
-  if (bars) h += '<div class="pdf-bars">' + bars + '</div>';
+  const jsPDF = window.jspdf.jsPDF;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const L = 18, R = 192, W = R - L, PT = 0.3528;
+  let y = 24;
+
+  function block(str, o) {
+    o = o || {};
+    const size = o.size || 11;
+    doc.setFont('helvetica', o.bold ? 'bold' : (o.italic ? 'italic' : 'normal'));
+    doc.setFontSize(size);
+    const c = o.color || [26, 26, 26];
+    doc.setTextColor(c[0], c[1], c[2]);
+    const lines = doc.splitTextToSize(String(str), W);
+    doc.text(lines, L, y);
+    y += lines.length * size * PT * 1.2 + (o.after == null ? 4 : o.after);
+  }
+
+  block('OUTSMART THE SYSTEM  ·  TEEN CHECK', { size: 8, color: [47, 109, 240], after: 2 });
+  block(window.session.teen_first_name, { size: 24, bold: true, after: 2 });
+  if (t.stage_display) block(t.stage_display, { size: 11, bold: true, color: [47, 109, 240], after: 4 });
+  if (t.goal_reflected) block(t.goal_reflected, { size: 12.5, color: [47, 74, 122], after: 7 });
+
+  (t.bars || []).forEach(function (b) {
+    const rowY = y;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(85, 85, 85);
+    doc.text(String(b.dimension), L, rowY + 1.6);
+    const tx = L + 50, tw = 104, th = 3.4, ty = rowY - 1.2;
+    doc.setFillColor(236, 236, 236); doc.roundedRect(tx, ty, tw, th, 1.7, 1.7, 'F');
+    if (b.score != null) {
+      const w = Math.max(2, clamp(b.score, 0, 5) / 5 * tw);
+      doc.setFillColor(47, 109, 240); doc.roundedRect(tx, ty, w, th, 1.7, 1.7, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(26, 26, 26);
+      doc.text(String(b.score), tx + tw + 4, rowY + 1.6);
+    } else {
+      doc.setFontSize(8); doc.setTextColor(170, 170, 170);
+      doc.text('not enough info yet', tx + 3, rowY + 1.3);
+    }
+    y += 7.5;
+  });
+  y += 3;
+
   const s = t.demonstrated_strength;
   if (s && s.text) {
-    h += '<div class="pdf-section"><h3>What you’ve already got</h3><p>' + escHtml(s.text) + '</p>';
-    if (s.evidence_quote) h += '<p class="pdf-quote">“' + escHtml(s.evidence_quote) + '”</p>';
-    h += '</div>';
+    block('WHAT YOU’VE ALREADY GOT', { size: 9, bold: true, color: [120, 120, 120], after: 2 });
+    block(s.text, { size: 11, after: s.evidence_quote ? 2.5 : 6 });
+    if (s.evidence_quote) block('“' + s.evidence_quote + '”', { size: 10, italic: true, color: [70, 70, 70], after: 6 });
   }
   const u = t.biggest_unlock;
   if (u && (u.skill || u.framing)) {
-    h += '<div class="pdf-section"><h3>Your biggest unlock' + (u.skill ? ': ' + escHtml(u.skill) : '') + '</h3>';
-    if (u.framing) h += '<p>' + escHtml(u.framing) + '</p>';
-    h += '</div>';
+    block('YOUR BIGGEST UNLOCK' + (u.skill ? ': ' + String(u.skill).toUpperCase() : ''), { size: 9, bold: true, color: [120, 120, 120], after: 2 });
+    if (u.framing) block(u.framing, { size: 11, after: 6 });
   }
-  if (t.seven_day_move) h += '<div class="pdf-section pdf-move"><h3>This week</h3><p>' + escHtml(t.seven_day_move) + '</p></div>';
-  h += '<div class="pdf-footer">outsmartthesystem.org &middot; ' + date + '</div>';
-  h += '</div>';
-  return h;
-}
-
-function pdfBar(b) {
-  const label = escHtml(b.dimension);
-  if (b.score == null) {
-    return '<div class="pdf-bar-row"><span class="pdf-bar-label">' + label + '</span>' +
-      '<span style="flex:1;font-size:11px;color:#aaa;">not enough info yet</span>' +
-      '<span class="pdf-bar-score">—</span></div>';
+  if (t.seven_day_move) {
+    block('THIS WEEK', { size: 9, bold: true, color: [83, 150, 110], after: 2 });
+    block(t.seven_day_move, { size: 11, after: 6 });
   }
-  const w = clamp(b.score, 0, 5) / 5 * 100;
-  return '<div class="pdf-bar-row"><span class="pdf-bar-label">' + label + '</span>' +
-    '<span class="pdf-bar-track"><span class="pdf-bar-fill" style="width:' + w + '%"></span></span>' +
-    '<span class="pdf-bar-score">' + b.score + '</span></div>';
-}
 
-function escHtml(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  doc.setDrawColor(225, 225, 225); doc.line(L, 283, R, 283);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(150, 150, 150);
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  doc.text('outsmartthesystem.org  ·  ' + date, L, 289);
+  return doc;
 }
 
 // ─── TRANSCRIPT (for scoring) ────────────────────────────────────────────
