@@ -17,13 +17,19 @@ const SERVER_PROMPTS = (() => {
   } catch (e) { console.error('prompt load error:', e.message); return {}; }
 })();
 
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function callAnthropic({ model, system, messages, max_tokens }) {
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model, max_tokens: Math.min(max_tokens || 4000, 8000), system, messages })
-  });
-  const data = await r.json();
+  let r, data;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, max_tokens: Math.min(max_tokens || 4000, 8000), system, messages })
+    });
+    if ((r.status === 429 || r.status === 529) && attempt < 3) { await wait(attempt * 3000); continue; }
+    break;
+  }
+  data = await r.json();
   if (!r.ok) throw new Error('anthropic ' + r.status);
   return (data.content && data.content[0] && data.content[0].text) || '';
 }
@@ -52,6 +58,53 @@ function validateScoring(p) {
   for (const bar of t.bars) { if (!validScore(bar.score)) return false; }
   return true;
 }
+
+// ─── INTERVIEW ORCHESTRATION (Phase 4) ──────────────────────────────────────
+// The interview/skills turns now run server-side: the server holds the prompts
+// and the transcript, injects the per-turn anchor, detects sentinels, and feeds
+// scoring from its OWN stored transcript — the client never supplies the prompt
+// or the transcript, so neither can be tampered with.
+const SEED_MARKER = '__SEED_BEGIN__';
+const TOTAL_QUESTIONS = 16;
+const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
+const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';
+const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/;
+
+function stripSentinels(s) {
+  return String(s || '')
+    .replace(/\[SAFETY_EVENT:[^\]]*\]/g, '')
+    .split(COMPLETE_SENTINEL).join('')
+    .split(SKILLS_SENTINEL).join('')
+    .trim();
+}
+
+// Keeps Prompt A asking the next numbered question in order without leaking
+// scoring intent (this used to be injected client-side; now server-side).
+function interviewAnchor(qNum) {
+  return `[Internal note: based on the conversation so far, ask the NEXT question from your list that hasn't been asked yet, in order — never skip ahead, never repeat one already asked (you're roughly on question ${qNum} of ${TOTAL_QUESTIONS}). One question only. Vary your acknowledgment — never repeat "Got it," and about half the time skip the acknowledgment and go straight to the question. Honor skips. Do not score, rate, or praise. Watch for safety.]`;
+}
+function interviewQuestionNum(turns) {
+  const asked = (turns || []).filter(t => t.role === 'assistant').length;
+  return Math.max(1, Math.min(asked, TOTAL_QUESTIONS));
+}
+
+// Format a stored turn array into the speaker-labelled transcript the scoring
+// prompts expect (identical to the client's previous buildTranscript output).
+function formatTranscript(turns, userLabel, asstLabel) {
+  return (turns || [])
+    .filter(t => t.content !== SEED_MARKER)
+    .map(t => (t.role === 'user' ? userLabel : asstLabel) + ':\n' + t.content)
+    .join('\n\n———\n\n');
+}
+
+const INTERVIEW_SUB = (s) => SERVER_PROMPTS.A
+  .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
+  .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
+  .split('{{TEEN_AGE_PLUS_3}}').join(String(s.teen_age + 3))
+  .split('{{TEEN_AGE}}').join(String(s.teen_age));
+const SKILLS_SUB = (s) => SERVER_PROMPTS.C
+  .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
+  .split('{{TEEN_AGE}}').join(String(s.teen_age));
 
 // ─── SESSION COOKIE ─────────────────────────────────────────────────────────
 // The teen link carries an opaque session id (?s=…). On open it's exchanged for
@@ -276,6 +329,106 @@ app.get('/api/session', async (req, res) => {
   res.json(teenSafe(s));
 });
 
+// ─── INTERVIEW TURN (server-orchestrated, Phase 4) ──────────────────────────
+// The browser sends only { answer }; the server holds Prompt A + the transcript,
+// injects the per-turn anchor, calls the model, detects sentinels, and persists
+// the CLEAN turn (never the anchor). First call (empty transcript) seeds the
+// opening frame and ignores `answer`.
+app.post('/api/interview/turn', async (req, res) => {
+  const session = await currentSession(req);
+  if (!session) return res.status(401).json({ error: 'no active session' });
+  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
+  if (session.interview_complete) return res.json({ complete: true, message: '' });
+  if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.A) return res.status(500).json({ error: 'not configured' });
+
+  const answer = (req.body && typeof req.body.answer === 'string') ? req.body.answer.trim().slice(0, 4000) : '';
+  const store = session.turns || {};
+  let turns = Array.isArray(store.interview) ? store.interview.slice() : [];
+  if (turns.length === 0) {
+    turns.push({ role: 'user', content: SEED_MARKER });
+  } else {
+    if (!answer) return res.status(400).json({ error: 'answer required' });
+    turns.push({ role: 'user', content: answer });
+  }
+  // Inject the anchor into a COPY for the API; the stored turn stays clean.
+  const apiMessages = turns.map(t => ({ role: t.role, content: t.content }));
+  const last = apiMessages[apiMessages.length - 1];
+  if (last.role === 'user' && last.content !== SEED_MARKER) {
+    last.content = interviewAnchor(interviewQuestionNum(turns)) + '\n\n' + last.content;
+  }
+  try {
+    const raw = await callAnthropic({ model: 'claude-sonnet-4-6', system: INTERVIEW_SUB(session), messages: apiMessages, max_tokens: 1200 });
+    const safety = raw.match(SAFETY_SENTINEL_RE);
+    const clean = stripSentinels(raw);
+    if (safety) {
+      const flag = safety[1].toUpperCase();
+      if (SAFETY_BLOCK_FLAGS.has(flag)) {
+        await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag, turns: Object.assign({}, store, { interview: [] }) }); // purge
+      }
+      fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
+      return res.json({ safety: flag, message: clean });
+    }
+    const complete = raw.includes(COMPLETE_SENTINEL);
+    turns.push({ role: 'assistant', content: clean });
+    await db.updateSession(session.id, Object.assign({ turns: Object.assign({}, store, { interview: turns }) }, complete ? { interview_complete: true } : {}));
+    res.json({ message: clean, complete });
+  } catch (e) {
+    console.error('interview turn error:', e.message);
+    res.status(502).json({ error: 'interview error' });
+  }
+});
+
+// ─── SKILLS TURN (server-orchestrated, Phase 4) ─────────────────────────────
+app.post('/api/skills/turn', async (req, res) => {
+  const session = await currentSession(req);
+  if (!session) return res.status(401).json({ error: 'no active session' });
+  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
+  if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.C) return res.status(500).json({ error: 'not configured' });
+
+  const answer = (req.body && typeof req.body.answer === 'string') ? req.body.answer.trim().slice(0, 4000) : '';
+  const store = session.turns || {};
+  let turns = Array.isArray(store.skills) ? store.skills.slice() : [];
+  if (turns.length === 0) {
+    turns.push({ role: 'user', content: SEED_MARKER });
+  } else {
+    if (!answer) return res.status(400).json({ error: 'answer required' });
+    turns.push({ role: 'user', content: answer });
+  }
+  const apiMessages = turns.map(t => ({ role: t.role, content: t.content }));
+  try {
+    const raw = await callAnthropic({ model: 'claude-sonnet-4-6', system: SKILLS_SUB(session), messages: apiMessages, max_tokens: 1200 });
+    const safety = raw.match(SAFETY_SENTINEL_RE);
+    const clean = stripSentinels(raw);
+    if (safety) {
+      const flag = safety[1].toUpperCase();
+      if (SAFETY_BLOCK_FLAGS.has(flag)) {
+        await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag, turns: Object.assign({}, store, { skills: [] }) });
+      }
+      fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
+      return res.json({ safety: flag, message: clean });
+    }
+    const complete = raw.includes(SKILLS_SENTINEL);
+    turns.push({ role: 'assistant', content: clean });
+    await db.updateSession(session.id, { turns: Object.assign({}, store, { skills: turns }) });
+    res.json({ message: clean, complete });
+  } catch (e) {
+    console.error('skills turn error:', e.message);
+    res.status(502).json({ error: 'skills error' });
+  }
+});
+
+// ─── INTERVIEW STATE (resume on reload) ─────────────────────────────────────
+// Server is the single source of truth for the transcript now, so a reload
+// rebuilds from here rather than from device storage.
+app.get('/api/interview/state', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  const turns = (s.turns && Array.isArray(s.turns.interview))
+    ? s.turns.interview.filter(t => t.content !== SEED_MARKER)
+    : [];
+  res.json({ interview_complete: s.interview_complete, report_sent: s.report_sent, safety_blocked: s.safety_blocked, turns });
+});
+
 // ─── SCORE (Prompt B, server-side) ─────────────────────────────────────────
 // Runs the scoring on the server so the parent_report_draft is server-authored
 // and gets stored on the session — the client can never forge the report
@@ -285,7 +438,12 @@ app.post('/api/score', async (req, res) => {
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.B) return res.status(500).json({ error: 'scoring not configured' });
-  const transcript = String((req.body && req.body.transcript) || '');
+  // Prefer the SERVER-held transcript (Phase 4). Fall back to a client-supplied
+  // one only while the pre-Phase-4 client is still in the wild.
+  const storedI = (session.turns && Array.isArray(session.turns.interview)) ? session.turns.interview : null;
+  const transcript = (storedI && storedI.length)
+    ? formatTranscript(storedI, 'TEEN', 'INTERVIEWER')
+    : String((req.body && req.body.transcript) || '');
   if (!transcript) return res.status(400).json({ error: 'transcript required' });
   const system = SERVER_PROMPTS.B.split('{{TEEN_AGE}}').join(String(session.teen_age));
   try {
@@ -318,7 +476,10 @@ app.post('/api/skills-score', async (req, res) => {
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.D) return res.status(500).json({ error: 'scoring not configured' });
-  const transcript = String((req.body && req.body.transcript) || '');
+  const storedS = (session.turns && Array.isArray(session.turns.skills)) ? session.turns.skills : null;
+  const transcript = (storedS && storedS.length)
+    ? formatTranscript(storedS, 'PERSON', 'GUIDE')
+    : String((req.body && req.body.transcript) || '');
   if (!transcript) return res.status(400).json({ error: 'transcript required' });
   const system = SERVER_PROMPTS.D.split('{{TEEN_AGE}}').join(String(session.teen_age));
   try {
