@@ -3,6 +3,39 @@ const fetch = require('node-fetch');
 const crypto = require('crypto');
 const path = require('path');
 const nodemailer = require('nodemailer');
+const db = require('./db');   // durable server-side session/report store
+
+// ─── SESSION COOKIE ─────────────────────────────────────────────────────────
+// The teen link carries an opaque session id (?s=…). On open it's exchanged for
+// an HttpOnly cookie, and the id is stripped from the URL. The cookie — not a
+// client-held token — authenticates /api/chat and /api/parent-report afterward.
+const SESSION_COOKIE = 'ots_sid';
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+
+function setSessionCookie(req, res, id) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const parts = [
+    `${SESSION_COOKIE}=${id}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${SESSION_TTL_SECONDS}`
+  ];
+  if (secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax`);
+}
+function sessionIdFromCookie(req) {
+  const raw = req.headers.cookie || '';
+  const m = raw.match(new RegExp('(?:^|;\\s*)' + SESSION_COOKIE + '=([^;]+)'));
+  return m ? m[1] : null;
+}
+// Resolve the current session from the cookie; null if none/expired.
+async function currentSession(req) {
+  return db.getSession(sessionIdFromCookie(req));
+}
 
 // Direct mail transport for SAFETY alerts only (not the parent report, which
 // goes via Make). Safety is critical enough that it shouldn't depend on a
@@ -136,12 +169,24 @@ function verifyToken(token) {
   return payload;
 }
 
+// Teen-facing session fields. parent_email is NEVER returned — it lives only in
+// the server-side row and is read directly from there when the report sends.
+function teenSafe(s) {
+  return {
+    teen_first_name: s.teen_first_name,
+    teen_age: s.teen_age,
+    teen_age_plus_3: s.teen_age + 3, // pre-computed: the model is unreliable at arithmetic
+    parent_first_name: s.parent_first_name,
+    interview_complete: !!s.interview_complete,
+    report_sent: !!s.report_sent,
+    safety_blocked: !!s.safety_blocked
+  };
+}
+
 // ─── REGISTER (parent) ─────────────────────────────────────────────────────
-// The future registration page POSTs here. Returns the token + the teen's link.
-app.post('/api/register', (req, res) => {
-  if (!process.env.TOKEN_SIGNING_SECRET) {
-    return res.status(500).json({ error: 'Server not configured: TOKEN_SIGNING_SECRET missing' });
-  }
+// Creates an opaque server-side session and returns the teen's link (?s=<id>).
+// The id is unguessable random; the PII lives in the row, not the link.
+app.post('/api/register', async (req, res) => {
   const { teen_first_name, teen_age, parent_first_name, parent_email } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
@@ -153,34 +198,34 @@ app.post('/api/register', (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pEmail)) return res.status(400).json({ error: 'valid parent_email required' });
   if (!Number.isInteger(age) || age < 13 || age > 25) return res.status(400).json({ error: 'age must be an integer 13–25' });
 
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    v: 1,
-    sid: crypto.randomUUID(),
-    teen_first_name: tName,
-    teen_age: age,
-    parent_first_name: pName,
-    parent_email: pEmail,
-    iat: now,
-    exp: now + TOKEN_TTL_SECONDS
-  };
-  const token = signToken(payload);
+  const id = crypto.randomBytes(24).toString('base64url');
+  const expires_at = Date.now() + SESSION_TTL_SECONDS * 1000;
+  try {
+    await db.createSession({ id, teen_first_name: tName, teen_age: age, parent_first_name: pName, parent_email: pEmail, expires_at });
+  } catch (e) {
+    console.error('register/createSession error:', e.message);
+    return res.status(500).json({ error: 'Could not create the session. Try again.' });
+  }
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
-  res.json({ token, teen_url: `${base}/?t=${encodeURIComponent(token)}`, sid: payload.sid, expires_at: payload.exp });
+  res.json({ teen_url: `${base}/?s=${id}`, expires_at: Math.floor(expires_at / 1000) });
 });
 
-// ─── SESSION (teen) ────────────────────────────────────────────────────────
-// The teen page reads ?t=<token>, calls this, and injects the result into the
-// Prompt A placeholders. parent_email is deliberately NOT returned.
-app.get('/api/session', (req, res) => {
-  const payload = verifyToken(req.query.t);
-  if (!payload) return res.status(401).json({ error: 'invalid or expired token' });
-  res.json({
-    teen_first_name: payload.teen_first_name,
-    teen_age: payload.teen_age,
-    teen_age_plus_3: payload.teen_age + 3, // pre-computed: the model is unreliable at arithmetic
-    parent_first_name: payload.parent_first_name
-  });
+// ─── START (teen opens the link) ───────────────────────────────────────────
+// Exchanges the opaque link id for an HttpOnly session cookie. The client then
+// strips ?s= from the URL; all later calls authenticate by cookie.
+app.post('/api/session/start', async (req, res) => {
+  const s = await db.getSession(req.body && req.body.s);
+  if (!s) return res.status(401).json({ error: 'invalid or expired link' });
+  setSessionCookie(req, res, s.id);
+  res.json(teenSafe(s));
+});
+
+// ─── SESSION (current, via cookie) ─────────────────────────────────────────
+// Used on reload to re-establish state without the link in the URL.
+app.get('/api/session', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  res.json(teenSafe(s));
 });
 
 // ─── PARENT REPORT (post preview/veto) ─────────────────────────────────────
@@ -255,50 +300,47 @@ function buildParentEmail(report, teenName, parentName) {
 }
 
 app.post('/api/parent-report', async (req, res) => {
-  const payload = verifyToken(req.body && req.body.t);
-  if (!payload) return res.status(401).json({ error: 'invalid or expired token' });
-  // Server-enforced safety block: if this session ever flagged CRISIS/ABUSE, no
-  // report goes out — even if a modified browser or second device asks. (The
-  // 200 shape mirrors success so a probing client learns nothing.)
-  if (payload.sid && safetyBlockedSids.has(payload.sid)) {
-    console.warn('[PARENT_REPORT_BLOCKED] safety-flagged sid=' + payload.sid);
-    return res.json({ success: true });
-  }
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  // Server-enforced, durable: a flagged session never sends a report, and a
+  // session sends at most once — regardless of what a modified client claims.
+  // The 200 shape mirrors success so a probing client learns nothing.
+  if (s.safety_blocked) { console.warn('[PARENT_REPORT_BLOCKED] safety sid=' + s.id); return res.json({ success: true }); }
+  if (s.report_sent) { console.warn('[PARENT_REPORT_DUP] already sent sid=' + s.id); return res.json({ success: true }); }
+
   const webhook = process.env.TEEN_MAKE_WEBHOOK_URL;
   if (!webhook) return res.status(500).json({ error: 'Server not configured: TEEN_MAKE_WEBHOOK_URL missing' });
   const approved = req.body && req.body.approved_report;
   if (!approved || typeof approved !== 'object') return res.status(400).json({ error: 'approved_report required' });
 
-  const email = buildParentEmail(approved, payload.teen_first_name, payload.parent_first_name);
+  // Mark sent BEFORE the network call so a concurrent retry can't double-send.
+  await db.updateSession(s.id, { report_sent: true });
+
+  const email = buildParentEmail(approved, s.teen_first_name, s.parent_first_name);
   const out = {
-    // Shared secret the Make scenario filters on, so the webhook can't be used
-    // as an open email relay by anyone who learns the URL. Set MAKE_SHARED_SECRET
-    // in Render to the same value the Make filter checks.
-    auth: process.env.MAKE_SHARED_SECRET || '',
-    sid: payload.sid,
-    parent_email: payload.parent_email,       // from the signed token only
-    parent_first_name: payload.parent_first_name,
-    teen_first_name: payload.teen_first_name,
-    teen_age: payload.teen_age,
-    email_subject: email.subject,             // pre-rendered so Make just delivers
+    auth: process.env.MAKE_SHARED_SECRET || '', // gates the Make webhook
+    sid: s.id,
+    parent_email: s.parent_email,               // from the server-side row only
+    parent_first_name: s.parent_first_name,
+    teen_first_name: s.teen_first_name,
+    teen_age: s.teen_age,
+    email_subject: email.subject,
     email_html: email.html,
     email_text: email.text,
-    approved_report: approved,                // structured copy too, for logging
+    approved_report: approved,
     sent_at: new Date().toISOString()
   };
   try {
-    const r = await fetch(webhook, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(out)
-    });
+    const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out) });
     if (!r.ok) {
       console.error('Parent-report webhook non-OK:', r.status);
+      await db.updateSession(s.id, { report_sent: false }); // allow a retry
       return res.status(502).json({ error: 'webhook rejected', status: r.status });
     }
     res.json({ success: true });
   } catch (err) {
     console.error('Parent-report webhook error:', err.message);
+    await db.updateSession(s.id, { report_sent: false });
     res.status(502).json({ error: err.message });
   }
 });
@@ -323,10 +365,9 @@ app.post('/api/parent-report', async (req, res) => {
 const SAFETY_FLAGS = new Set(['CRISIS', 'ABUSE', 'SUPPORT', 'DISTRESS']);
 const SAFETY_EMAIL_FLAGS = new Set(['CRISIS', 'ABUSE']);
 const SAFETY_BLOCK_FLAGS = new Set(['CRISIS', 'ABUSE']); // these block any parent report
-const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}`
-const safetyBlockedSids = new Set(); // sids that hit CRISIS/ABUSE — parent report refused server-side
-// NOTE: in-memory only. Survives the process, not a restart or a second instance.
-// The durable fix is server-side session state (see the audit's P0 rearchitecture).
+const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}` (alert dedup only)
+// The durable parent-report block now lives in the session row (safety_blocked),
+// set by the callers below — not an in-memory set.
 
 // Pre-render the responder alert email. Contains NO teen disclosure — only the
 // flag, first name, age, session id. ABUSE carries a do-not-contact-parent banner.
@@ -365,10 +406,6 @@ async function fireSafetyAlert(flag, info) {
 
   console.warn('[SAFETY_EVENT]', flag, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
 
-  // Server-side block: once a session hits CRISIS/ABUSE, refuse any parent
-  // report for it regardless of what a (possibly modified) client claims.
-  if (SAFETY_BLOCK_FLAGS.has(flag) && info.sid) safetyBlockedSids.add(info.sid);
-
   if (!SAFETY_EMAIL_FLAGS.has(flag)) return; // SUPPORT/DISTRESS: recorded, not emailed
   if (!safetyMailer) {
     console.error('Safety email not configured (EMAIL_USER/EMAIL_PASS) — a', flag, 'alert was NOT delivered.');
@@ -384,14 +421,15 @@ async function fireSafetyAlert(flag, info) {
   }
 }
 
-// Client-reported safety event (token-gated). Acks regardless so the client
-// never learns whether/how an alert was routed.
-app.post('/api/safety-event', (req, res) => {
-  const payload = verifyToken(req.body && req.body.t);
-  if (!payload) return res.status(401).json({ error: 'invalid or expired token' });
+// Client-reported safety event (cookie-gated). Acks regardless so the client
+// never learns whether/how an alert was routed. Persists the durable block.
+app.post('/api/safety-event', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
   const flag = String(req.body && req.body.flag || '').toUpperCase();
   if (!SAFETY_FLAGS.has(flag)) return res.status(400).json({ error: 'invalid flag' });
-  fireSafetyAlert(flag, { sid: payload.sid, teen_first_name: payload.teen_first_name, teen_age: payload.teen_age });
+  if (SAFETY_BLOCK_FLAGS.has(flag)) { try { await db.updateSession(s.id, { safety_blocked: true, safety_flag: flag }); } catch (e) { console.error('safety block persist:', e.message); } }
+  fireSafetyAlert(flag, { sid: s.id, teen_first_name: s.teen_first_name, teen_age: s.teen_age });
   res.json({ ok: true });
 });
 
@@ -406,11 +444,16 @@ const ALLOWED_MODELS = new Set([
 ]);
 
 app.post('/api/chat', async (req, res) => {
+  // Cookie-gate FIRST: only a real, unblocked session can use the proxy, and an
+  // unauthenticated caller learns nothing about config. (Closes most of the
+  // open-AI-proxy hole; the prompt is still client-supplied until Phase 4.)
+  const session = await currentSession(req);
+  if (!session) return res.status(401).json({ error: 'no active session' });
+  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(500).json({ error: 'Server not configured: ANTHROPIC_API_KEY missing' });
   }
   try {
-    // Forward ONLY the Anthropic fields — never pass `t` or other extras upstream.
     const body = {
       model: ALLOWED_MODELS.has(req.body.model) ? req.body.model : 'claude-sonnet-4-6',
       max_tokens: Math.min(Number(req.body.max_tokens) || 1200, 8000),
@@ -431,14 +474,14 @@ app.post('/api/chat', async (req, res) => {
     console.log('Model:', body.model, '| Status:', response.status);
     if (!response.ok) return res.status(response.status).json(data);
 
-    // Server-side safety detection (tamper-resistant). Attribute via the signed
-    // token. Fire-and-forget so the teen's turn isn't delayed.
+    // Server-side safety detection (tamper-resistant), attributed to the cookie
+    // session. Persist the durable block + alert; don't delay the teen's turn.
     try {
       const text = (data.content && data.content[0] && data.content[0].text) || '';
       const m = text.match(/\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/);
       if (m) {
-        const p = verifyToken(req.body && req.body.t);
-        if (p) fireSafetyAlert(m[1], { sid: p.sid, teen_first_name: p.teen_first_name, teen_age: p.teen_age });
+        if (SAFETY_BLOCK_FLAGS.has(m[1])) db.updateSession(session.id, { safety_blocked: true, safety_flag: m[1] }).catch(() => {});
+        fireSafetyAlert(m[1], { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
       }
     } catch (e) { console.error('safety scan error:', e.message); }
 
@@ -456,17 +499,20 @@ app.post('/api/chat', async (req, res) => {
 app.get('/api/health', (req, res) => {
   const configured = {
     anthropic: !!process.env.ANTHROPIC_API_KEY,
-    token_secret: !!process.env.TOKEN_SIGNING_SECRET,
     teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
     make_secret: !!process.env.MAKE_SHARED_SECRET,
-    safety_email: !!safetyMailer
+    safety_email: !!safetyMailer,
+    durable_db: db.backend() === 'postgres'   // in-memory is dev-only, not launch-ready
   };
   const missing = Object.keys(configured).filter(k => !configured[k]);
-  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, configured, missing });
+  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), configured, missing });
 });
 
 app.use(express.static(path.join(__dirname)));
 
 // ─── START SERVER ──────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT}`));
+db.init()
+  .then(() => console.log('session store ready:', db.backend()))
+  .catch(e => console.error('db.init error (continuing):', e.message))
+  .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()})`)));

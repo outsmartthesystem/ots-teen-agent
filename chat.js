@@ -30,8 +30,7 @@ const SEED_MARKER = '__SEED_BEGIN__';           // hidden first user turn that t
 const conversationHistory = []; // interview turns [{ role, content }]
 const skillsHistory = [];       // optional scenario-check turns [{ role, content }]
 window.mode = 'interview';      // 'interview' | 'skills' — which loop is running
-window.session = null;          // { teen_first_name, teen_age, teen_age_plus_3, parent_first_name }
-window.rawToken = null;
+window.session = null;          // teen-safe fields from /api/session(/start); auth is the cookie
 window.safetyEvent = null;      // null | 'CRISIS' | 'ABUSE' | 'SUPPORT'
 window.halted = false;          // hard stop (CRISIS): no more turns, no scoring
 window.blockParentReport = false; // CRISIS or ABUSE: this session never produces a parent report
@@ -46,34 +45,50 @@ function activeHistory() { return window.mode === 'skills' ? skillsHistory : con
 document.addEventListener('DOMContentLoaded', boot);
 
 async function boot() {
-  const token = new URLSearchParams(location.search).get('t');
-  if (!token) {
-    // No token means someone hit the bare domain (not a teen's link). Send them
-    // to the parent registration page rather than a dead-end error.
-    location.replace('/register.html');
-    return;
-  }
-  window.rawToken = token;
-
+  const linkId = new URLSearchParams(location.search).get('s');
   let session;
   try {
-    const r = await fetch('/api/session?t=' + encodeURIComponent(token));
-    const j = await r.json();
-    if (!r.ok) {
-      return showError(j.error === 'invalid or expired token'
-        ? "This link has expired or isn't valid anymore. Ask for a fresh one."
-        : (j.error || 'Could not start the session.'));
+    if (linkId) {
+      // First open: exchange the opaque link id for an HttpOnly session cookie.
+      const r = await fetch('/api/session/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ s: linkId })
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        return showError(j.error === 'invalid or expired link'
+          ? "This link has expired or isn't valid anymore. Ask for a fresh one."
+          : (j.error || 'Could not start the session.'));
+      }
+      session = j;
+      // Strip the id from the URL so it isn't left in the address bar / history.
+      history.replaceState(null, '', location.pathname);
+      // Fresh start — drop any stale transcript left in this tab by another session.
+      clearSession();
+    } else {
+      // Reload (no link in the URL): re-establish from the cookie.
+      const r = await fetch('/api/session');
+      if (!r.ok) { location.replace('/register.html'); return; }
+      session = await r.json();
     }
-    session = j;
   } catch (e) {
     return showError("Couldn't reach the server. Check your connection and reload.");
   }
   window.session = session;
 
-  // Offer to resume an in-progress session for this exact token.
-  const saved = loadSession();
-  if (saved && saved.token === token) {
-    return showResume(saved);
+  if (session.safety_blocked) {
+    return showError("This check is closed. If you’re carrying something heavy, you can call or text <b>988</b> any time — it’s free and people who can help answer.");
+  }
+  if (session.report_sent) {
+    return showError("This check is already done — your result was shared the way you chose. Nice work.");
+  }
+
+  if (!linkId) {
+    const saved = loadSession();
+    if (saved) return showResume(saved);
+    if (session.interview_complete) {
+      return showError("This check is already complete.");
+    }
   }
   startInterview();
 }
@@ -197,8 +212,8 @@ async function getAssistantTurn() {
           model: MODEL_INTERVIEW,
           max_tokens: 1200,
           system,
-          messages: getApiMessages(),
-          t: window.rawToken // server-side safety attribution only; not forwarded to the model
+          messages: getApiMessages()
+          // auth is the session cookie (sent automatically, same-origin)
         })
       });
       data = await response.json();
@@ -298,7 +313,7 @@ function reportSafetyEvent(flag) {
     fetch('/api/safety-event', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ t: window.rawToken, flag: flag })
+      body: JSON.stringify({ flag: flag })
     }).catch(() => {});
   } catch (e) { /* never let reporting break the safety UX */ }
 }
@@ -332,8 +347,7 @@ async function runScoring() {
           model: MODEL_SCORING,
           max_tokens: 4000,
           system,
-          messages: [{ role: 'user', content: transcript }],
-          t: window.rawToken
+          messages: [{ role: 'user', content: transcript }]
         })
       });
       const data = await response.json();
@@ -564,7 +578,7 @@ async function scoreSkills() {
   try {
     const r = await fetch('/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL_SCORING, max_tokens: 2000, system, messages: [{ role: 'user', content: transcript }], t: window.rawToken })
+      body: JSON.stringify({ model: MODEL_SCORING, max_tokens: 2000, system, messages: [{ role: 'user', content: transcript }] })
     });
     const data = await r.json();
     if (!data || !data.content || !data.content[0]) throw new Error('bad skills response');
@@ -815,7 +829,7 @@ async function sendParentReport() {
     const r = await fetch('/api/parent-report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ t: window.rawToken, approved_report })
+      body: JSON.stringify({ approved_report })
     });
     const j = await r.json();
     if (!r.ok || !j.success) throw new Error(j.error || 'send failed');
@@ -1074,11 +1088,10 @@ function estimateQuestion() {
 // often set up on a shared or parent's device. After a CRISIS/ABUSE disclosure
 // nothing is persisted at all, and any prior state is purged immediately.
 function saveSession() {
-  if (!window.rawToken) return;
+  if (!window.session) return;
   // Never write a transcript to the device once a serious safety event has fired.
   if (window.safetyEvent === 'CRISIS' || window.safetyEvent === 'ABUSE') return;
   const state = {
-    token: window.rawToken,
     conversationHistory,
     safetyEvent: window.safetyEvent,
     blockParentReport: window.blockParentReport,

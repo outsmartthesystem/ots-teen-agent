@@ -9,7 +9,7 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY      # interview + scoring
         sync: false
-      - key: TOKEN_SIGNING_SECRET   # signs session tokens
+      - key: DATABASE_URL          # Postgres (Internal Database URL) for server-side sessions
         sync: false
       - key: TEEN_MAKE_WEBHOOK_URL  # parent-report delivery (teen agent's OWN webhook)
         sync: false
