@@ -496,7 +496,7 @@ app.post('/api/score/refine', async (req, res) => {
   if (!correction) return res.status(400).json({ error: 'correction required' });
 
   const baseTranscript = formatTranscript(storedI, 'TEEN', 'INTERVIEWER');
-  const transcript = baseTranscript + '\n\n———\n\nTEEN (reviewing their result):\nThe first read missed something. Re-read the whole conversation with this correction in mind, and adjust the result: ' + correction;
+  const transcript = baseTranscript + '\n\n=== TEEN\'S CORRECTION ===\n' + correction;
   const system = SERVER_PROMPTS.B.split('{{TEEN_AGE}}').join(String(session.teen_age));
   try {
     let parsed = null;
