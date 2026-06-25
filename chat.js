@@ -331,47 +331,28 @@ function handleComplete() {
 
 async function runScoring() {
   const status = addStatus('Putting your result together — about 30 seconds. Your answers are saved, so you won’t lose anything.');
-
   const transcript = buildTranscript();
-  const system = window.PROMPT_B.split('{{TEEN_AGE}}').join(String(window.session.teen_age));
-
   try {
-    // Validate the scoring shape; if the model returns something malformed
-    // (bad scores, missing fields), retry once before giving up (audit #2).
-    let parsed = null;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL_SCORING,
-          max_tokens: 4000,
-          system,
-          messages: [{ role: 'user', content: transcript }]
-        })
-      });
-      const data = await response.json();
-      if (data && data.content && data.content[0]) {
-        const candidate = parseScoringJSON(data.content[0].text);
-        if (candidate && validateScoring(candidate)) { parsed = candidate; break; }
-        console.warn('Scoring output invalid on attempt ' + attempt + ' — retrying.');
-      }
-    }
+    // Scoring runs SERVER-side now (Prompt B): the server validates, retries,
+    // handles its own safety pass, and STORES the authentic report draft. We just
+    // render what comes back. The teen result never contains the parent's email.
+    const r = await fetch('/api/score', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript })
+    });
+    const data = await r.json();
     status.remove();
 
-    if (!parsed) throw new Error('Could not get a valid scoring result');
-
-    // Scoring has its own STEP 0 safety pass — honor it through the same handler
-    // (server report + device purge + report block), then stop without a score.
-    if (parsed.safety_check && parsed.safety_check.clear === false) {
+    if (data && data.safety) {
       window.blockParentReport = true;
-      handleSafety(parsed.safety_check.flag || 'DISTRESS');
+      handleSafety(String(data.safety));
       addStatus('Thanks for being honest with me. There’s no scored result here — what you shared matters more than that.');
       return;
     }
+    if (!r.ok || !data.result) throw new Error((data && data.error) || 'Could not get a valid result');
 
-    window.scoringResult = parsed;
-    renderResult(parsed);
+    window.scoringResult = data.result;
+    renderResult(data.result);
   } catch (e) {
     status.remove();
     console.error('Scoring error:', e);
@@ -574,29 +555,25 @@ async function scoreSkills() {
     .filter(t => t.content !== SEED_MARKER)
     .map(t => (t.role === 'user' ? 'PERSON' : 'GUIDE') + ':\n' + t.content)
     .join('\n\n———\n\n');
-  const system = window.PROMPT_D.split('{{TEEN_AGE}}').join(String(window.session.teen_age));
   try {
-    const r = await fetch('/api/chat', {
+    // Skills scoring (Prompt D) also runs server-side and adds the money-judgment
+    // line to the STORED report draft.
+    const r = await fetch('/api/skills-score', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL_SCORING, max_tokens: 2000, system, messages: [{ role: 'user', content: transcript }] })
+      body: JSON.stringify({ transcript })
     });
     const data = await r.json();
-    if (!data || !data.content || !data.content[0]) throw new Error('bad skills response');
-    const parsed = parseScoringJSON(data.content[0].text);
     status.remove();
     window.mode = 'interview';
-    if (!parsed) throw new Error('could not parse skills JSON');
-    if (parsed.safety_check && parsed.safety_check.clear === false) {
-      // Route a scenario-surfaced safety flag through the same handler as the
-      // interview — server reporting, resources, device purge, report block.
-      handleSafety(parsed.safety_check.flag || 'SUPPORT');
+    if (data && data.safety) {
+      handleSafety(String(data.safety));
       renderResult(window.scoringResult);
       return;
     }
-    window.moneyJudgment = parsed.money_judgment || null;
+    if (!r.ok) throw new Error((data && data.error) || 'skills scoring failed');
+    window.moneyJudgment = data.money_judgment || null;
     mergeMoneyJudgmentIntoReport();
     renderResult(window.scoringResult);
-    console.log('MONEY JUDGMENT:', window.moneyJudgment);
   } catch (e) {
     status.remove();
     window.mode = 'interview';
@@ -812,24 +789,21 @@ async function sendParentReport() {
   // FREEZE: approved (shared) items with their possibly-edited text. No Prompt B
   // re-call. Personalized fields (growth horizon, confidence, program fit) now
   // travel as approved items only — nothing personalized bypasses the veto.
-  const items = window.previewItems
-    .filter(i => i.shared)
-    // Exact quote only travels if the teen kept "include my words" on.
-    .map(i => ({ id: i.id, category: i.category, text: i.text, evidence_quote: i.includeQuote === false ? null : i.evidence_quote }));
+  // Send only SELECTIONS (which stored items to include, optional rewording,
+  // quote on/off) + the teen's support line. The server builds the email from
+  // its own stored, server-authored draft — the client can't inject content that
+  // wasn't scored. (audit P0 #9)
+  const selections = window.previewItems.map(i => ({
+    id: i.id, include: !!i.shared, text: i.text, includeQuote: i.includeQuote !== false
+  }));
   const supportEl = document.getElementById('pvSupport');
-  const supportText = supportEl && supportEl.value.trim();
-  if (supportText) items.push({ id: 'sr1', category: 'support_request', text: supportText, evidence_quote: null });
-  const approved_report = {
-    shareable_items: items,
-    fixed_framing: draft.fixed_framing || null,
-    parent_action: draft.parent_action || ''   // generic parenting guidance, not a teen disclosure
-  };
+  const support_request = supportEl && supportEl.value.trim() ? supportEl.value.trim() : '';
 
   try {
     const r = await fetch('/api/parent-report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved_report })
+      body: JSON.stringify({ selections, support_request })
     });
     const j = await r.json();
     if (!r.ok || !j.success) throw new Error(j.error || 'send failed');

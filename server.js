@@ -2,8 +2,56 @@ const express = require('express');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const nodemailer = require('nodemailer');
 const db = require('./db');   // durable server-side session/report store
+
+// Scoring prompts (B + D) run SERVER-side now, so the report draft is
+// server-authored and can't be forged by the client. Loaded from the same
+// generated prompts.js (single source of truth) at startup.
+const SERVER_PROMPTS = (() => {
+  try {
+    const win = {};
+    new Function('window', fs.readFileSync(path.join(__dirname, 'prompts.js'), 'utf8'))(win);
+    return { A: win.PROMPT_A, B: win.PROMPT_B, C: win.PROMPT_C, D: win.PROMPT_D };
+  } catch (e) { console.error('prompt load error:', e.message); return {}; }
+})();
+
+async function callAnthropic({ model, system, messages, max_tokens }) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model, max_tokens: Math.min(max_tokens || 4000, 8000), system, messages })
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error('anthropic ' + r.status);
+  return (data.content && data.content[0] && data.content[0].text) || '';
+}
+
+// Server-side copies of the scoring JSON parse + validate (mirror the client).
+function parseScoringJSON(text) {
+  let t = String(text).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a === -1 || b <= a) return null;
+  try { return JSON.parse(t.slice(a, b + 1)); } catch { return null; }
+}
+const CONFIDENCE_ENUM = new Set(['high', 'moderate', 'limited', 'insufficient']);
+function validScore(s) { return s === null || (Number.isInteger(s) && s >= 1 && s <= 5); }
+function validateScoring(p) {
+  if (!p || typeof p !== 'object' || !p.safety_check) return false;
+  if (p.safety_check.clear === false) return true;
+  const t = p.teen_output;
+  if (!t || !Array.isArray(t.bars) || !t.bars.length) return false;
+  if (p.scoring && typeof p.scoring === 'object') {
+    for (const k of Object.keys(p.scoring)) {
+      const d = p.scoring[k] || {};
+      if (!validScore(d.score)) return false;
+      if (d.confidence && !CONFIDENCE_ENUM.has(d.confidence)) return false;
+    }
+  }
+  for (const bar of t.bars) { if (!validScore(bar.score)) return false; }
+  return true;
+}
 
 // ─── SESSION COOKIE ─────────────────────────────────────────────────────────
 // The teen link carries an opaque session id (?s=…). On open it's exchanged for
@@ -228,6 +276,77 @@ app.get('/api/session', async (req, res) => {
   res.json(teenSafe(s));
 });
 
+// ─── SCORE (Prompt B, server-side) ─────────────────────────────────────────
+// Runs the scoring on the server so the parent_report_draft is server-authored
+// and gets stored on the session — the client can never forge the report
+// content; at send time it can only pick from this stored draft.
+app.post('/api/score', async (req, res) => {
+  const session = await currentSession(req);
+  if (!session) return res.status(401).json({ error: 'no active session' });
+  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
+  if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.B) return res.status(500).json({ error: 'scoring not configured' });
+  const transcript = String((req.body && req.body.transcript) || '');
+  if (!transcript) return res.status(400).json({ error: 'transcript required' });
+  const system = SERVER_PROMPTS.B.split('{{TEEN_AGE}}').join(String(session.teen_age));
+  try {
+    let parsed = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const text = await callAnthropic({ model: 'claude-opus-4-8', system, messages: [{ role: 'user', content: transcript }], max_tokens: 4000 });
+      const c = parseScoringJSON(text);
+      if (c && validateScoring(c)) { parsed = c; break; }
+      console.warn('score: invalid output attempt ' + attempt);
+    }
+    if (!parsed) return res.status(502).json({ error: 'could not produce a valid result' });
+    if (parsed.safety_check && parsed.safety_check.clear === false) {
+      const flag = String(parsed.safety_check.flag || 'DISTRESS').toUpperCase();
+      if (SAFETY_BLOCK_FLAGS.has(flag)) await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag });
+      fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
+      return res.json({ safety: flag });
+    }
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true });
+    res.json({ result: parsed }); // no parent_email anywhere in the model output
+  } catch (e) {
+    console.error('score error:', e.message);
+    res.status(502).json({ error: 'scoring error' });
+  }
+});
+
+// ─── SKILLS SCORE (Prompt D, server-side) ──────────────────────────────────
+app.post('/api/skills-score', async (req, res) => {
+  const session = await currentSession(req);
+  if (!session) return res.status(401).json({ error: 'no active session' });
+  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
+  if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.D) return res.status(500).json({ error: 'scoring not configured' });
+  const transcript = String((req.body && req.body.transcript) || '');
+  if (!transcript) return res.status(400).json({ error: 'transcript required' });
+  const system = SERVER_PROMPTS.D.split('{{TEEN_AGE}}').join(String(session.teen_age));
+  try {
+    const text = await callAnthropic({ model: 'claude-opus-4-8', system, messages: [{ role: 'user', content: transcript }], max_tokens: 2000 });
+    const parsed = parseScoringJSON(text);
+    if (!parsed) return res.status(502).json({ error: 'could not parse skills result' });
+    if (parsed.safety_check && parsed.safety_check.clear === false) {
+      const flag = String(parsed.safety_check.flag || 'DISTRESS').toUpperCase();
+      if (SAFETY_BLOCK_FLAGS.has(flag)) await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag });
+      fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
+      return res.json({ safety: flag });
+    }
+    const mj = parsed.money_judgment || null;
+    if (mj && mj.score != null) {
+      const fresh = await db.getSession(session.id);
+      const draft = (fresh && fresh.report_draft) || {};
+      if (!Array.isArray(draft.shareable_items)) draft.shareable_items = [];
+      if (!draft.shareable_items.some(i => i.id === 'mj1')) {
+        draft.shareable_items.push({ id: 'mj1', category: 'money_judgment', text: mj.parent_line || mj.teen_summary || '', evidence_quote: null });
+        await db.updateSession(session.id, { report_draft: draft });
+      }
+    }
+    res.json({ money_judgment: mj });
+  } catch (e) {
+    console.error('skills-score error:', e.message);
+    res.status(502).json({ error: 'skills scoring error' });
+  }
+});
+
 // ─── PARENT REPORT (post preview/veto) ─────────────────────────────────────
 // Fires only after the teen approves the preview. Destination is taken from the
 // SIGNED token, never the client body. Forwards to the teen agent's OWN Make
@@ -310,8 +429,38 @@ app.post('/api/parent-report', async (req, res) => {
 
   const webhook = process.env.TEEN_MAKE_WEBHOOK_URL;
   if (!webhook) return res.status(500).json({ error: 'Server not configured: TEEN_MAKE_WEBHOOK_URL missing' });
-  const approved = req.body && req.body.approved_report;
-  if (!approved || typeof approved !== 'object') return res.status(400).json({ error: 'approved_report required' });
+
+  // FORGERY FIX: build the report from the SERVER-STORED draft, never from
+  // client-supplied content. The client sends only selections (which item ids to
+  // include, optional rephrasings, quote on/off) + an optional support line.
+  const draft = s.report_draft;
+  if (!draft) return res.status(400).json({ error: 'no report to send' });
+  const selections = Array.isArray(req.body && req.body.selections) ? req.body.selections : [];
+  const selById = {};
+  selections.forEach(x => { if (x && x.id) selById[x.id] = x; });
+
+  // The full set of vetoable items the teen could have seen, all from the stored
+  // draft (mirrors the client preview): the model's shareable_items plus the
+  // personalized growth-horizon / confidence / program-fit lines.
+  const available = Array.isArray(draft.shareable_items) ? draft.shareable_items.slice() : [];
+  if (draft.growth_horizon) available.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null });
+  if (draft.confidence_summary) available.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null });
+  if (draft.program_fit && draft.program_fit.text) available.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null });
+
+  const approvedItems = [];
+  available.forEach(it => {
+    const sel = selById[it.id];
+    if (!sel || !sel.include) return; // teen kept it private (or never selected it)
+    const edited = (typeof sel.text === 'string' && sel.text.trim()) ? sel.text.trim().slice(0, 2000) : it.text;
+    approvedItems.push({
+      id: it.id, category: it.category, text: edited,
+      evidence_quote: sel.includeQuote === false ? null : (it.evidence_quote || null)
+    });
+  });
+  const support = (req.body && typeof req.body.support_request === 'string') ? req.body.support_request.trim().slice(0, 500) : '';
+  if (support) approvedItems.push({ id: 'sr1', category: 'support_request', text: support, evidence_quote: null });
+
+  const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null, parent_action: draft.parent_action || '' };
 
   // Mark sent BEFORE the network call so a concurrent retry can't double-send.
   await db.updateSession(s.id, { report_sent: true });
