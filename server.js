@@ -200,10 +200,11 @@ const REPORT_CATEGORY_LABEL = {
   strength: 'A strength',
   growth_area: 'A growth area',
   environmental: 'Context worth knowing',
-  money_judgment: 'Money judgment',
+  money_judgment: 'Money decisions',
   growth_horizon: 'Where they are, and where they could be',
   confidence: 'How solid this read is',
-  program_fit: 'How OTS could help'
+  program_fit: 'How OTS could help',
+  support_request: 'How they’d like your support'
 };
 function buildParentEmail(report, teenName, parentName) {
   const items = Array.isArray(report.shareable_items) ? report.shareable_items : [];
@@ -222,6 +223,11 @@ function buildParentEmail(report, teenName, parentName) {
   });
   // growth horizon, confidence, and program fit now arrive as approved items
   // above (teen-vetoable) — they are no longer auto-appended here.
+  if (report.parent_action) {
+    h += `<div style="margin:20px 0;padding:14px 16px;background:#f0fbf5;border:1px solid #cdeede;border-radius:10px">`;
+    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#3a9b6e;margin-bottom:5px">What you can do this week</div>`;
+    h += `<div style="color:#333">${escHtml(report.parent_action)}</div></div>`;
+  }
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     h += `<p style="font-weight:600;margin:18px 0 6px">A few things to keep in mind:</p><ul style="color:#444;margin:0;padding-left:20px">`;
     ff.what_not_to_do.forEach(x => h += `<li style="margin-bottom:4px">${escHtml(x)}</li>`);
@@ -237,6 +243,7 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) t += '"' + it.evidence_quote + '"\n';
     t += '\n';
   });
+  if (report.parent_action) t += 'WHAT YOU CAN DO THIS WEEK\n' + report.parent_action + '\n\n';
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     t += 'A few things to keep in mind:\n';
     ff.what_not_to_do.forEach(x => t += '- ' + x + '\n');

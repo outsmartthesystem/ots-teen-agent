@@ -178,7 +178,7 @@ async function getAssistantTurn() {
     const q = estimateQuestion();
     hist[lastIdx] = {
       role: 'user',
-      content: `[Internal note for the interviewer: you're around Q${q} of ${TOTAL_QUESTIONS}. Acknowledge this answer neutrally in 1–2 sentences, then ask the next single question in order. Honor skips. Do not score, rate, or praise. Watch for safety.]\n\n${cleanUserText}`
+      content: `[Internal note: based on the conversation so far, ask the NEXT question from your list that hasn't been asked yet, in order — never skip ahead, never repeat one already asked (you're roughly on question ${q} of ${TOTAL_QUESTIONS}). One question only. Vary your acknowledgment — never repeat "Got it," and about half the time skip the acknowledgment and go straight to the question. Honor skips. Do not score, rate, or praise. Watch for safety.]\n\n${cleanUserText}`
     };
   }
 
@@ -321,24 +321,31 @@ async function runScoring() {
   const system = window.PROMPT_B.split('{{TEEN_AGE}}').join(String(window.session.teen_age));
 
   try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: MODEL_SCORING,
-        max_tokens: 4000,
-        system,
-        messages: [{ role: 'user', content: transcript }],
-        t: window.rawToken
-      })
-    });
-    const data = await response.json();
-    if (!data || !data.content || !data.content[0]) throw new Error('Bad scoring response');
-
-    const parsed = parseScoringJSON(data.content[0].text);
+    // Validate the scoring shape; if the model returns something malformed
+    // (bad scores, missing fields), retry once before giving up (audit #2).
+    let parsed = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: MODEL_SCORING,
+          max_tokens: 4000,
+          system,
+          messages: [{ role: 'user', content: transcript }],
+          t: window.rawToken
+        })
+      });
+      const data = await response.json();
+      if (data && data.content && data.content[0]) {
+        const candidate = parseScoringJSON(data.content[0].text);
+        if (candidate && validateScoring(candidate)) { parsed = candidate; break; }
+        console.warn('Scoring output invalid on attempt ' + attempt + ' — retrying.');
+      }
+    }
     status.remove();
 
-    if (!parsed) throw new Error('Could not parse scoring JSON');
+    if (!parsed) throw new Error('Could not get a valid scoring result');
 
     // Scoring has its own STEP 0 safety pass — honor it through the same handler
     // (server report + device purge + report block), then stop without a score.
@@ -363,6 +370,26 @@ async function runScoring() {
     document.getElementById('messages').appendChild(retry);
     scrollToBottom();
   }
+}
+
+// Client-side schema check on the scoring object — scores are 1–5 integers or
+// null, confidence is from the allowed enum, the result shape is present.
+const CONFIDENCE_ENUM = ['high', 'moderate', 'limited', 'insufficient'];
+function validScore(s) { return s === null || (Number.isInteger(s) && s >= 1 && s <= 5); }
+function validateScoring(p) {
+  if (!p || typeof p !== 'object' || !p.safety_check) return false;
+  if (p.safety_check.clear === false) return true; // a safety result is valid as-is
+  const t = p.teen_output;
+  if (!t || !Array.isArray(t.bars) || !t.bars.length) return false;
+  if (p.scoring && typeof p.scoring === 'object') {
+    for (const k of Object.keys(p.scoring)) {
+      const d = p.scoring[k] || {};
+      if (!validScore(d.score)) return false;
+      if (d.confidence && CONFIDENCE_ENUM.indexOf(d.confidence) === -1) return false;
+    }
+  }
+  for (const b of t.bars) { if (!validScore(b.score)) return false; }
+  return true;
 }
 
 function parseScoringJSON(text) {
@@ -662,6 +689,15 @@ function renderPreview(draft) {
   }
   root.appendChild(ro);
 
+  // Teen-authored support request — often the most useful line for the parent.
+  const sr = elem('div', 'pv-support');
+  sr.appendChild(elem('label', 'pv-support-label', 'One way you’d want ' + parent + ' to support this — without taking it over (optional)'));
+  const srInput = document.createElement('textarea');
+  srInput.id = 'pvSupport'; srInput.className = 'pv-support-input'; srInput.rows = 2;
+  srInput.placeholder = 'e.g. “ask before stepping in,” “let me try first,” “help me set up the account”…';
+  sr.appendChild(srInput);
+  root.appendChild(sr);
+
   const send = elem('button', 'btn btn-primary pv-send', 'Send to ' + parent);
   send.addEventListener('click', sendParentReport);
   const skip = elem('button', 'btn btn-ghost pv-skip', 'Don’t send anything');
@@ -675,26 +711,46 @@ function renderPreview(draft) {
 }
 
 function buildPreviewItem(item) {
+  if (item.evidence_quote && item.includeQuote === undefined) item.includeQuote = true;
   const card = elem('div', 'pv-item');
   card.appendChild(elem('div', 'pv-cat', categoryLabel(item.category)));
   const textEl = elem('div', 'pv-text');
   appendTextWithLineBreaks(textEl, item.text);
   card.appendChild(textEl);
-  if (item.evidence_quote) card.appendChild(elem('blockquote', 'pv-quote', '“' + item.evidence_quote + '”'));
+
+  let quoteEl = null;
+  if (item.evidence_quote) quoteEl = elem('blockquote', 'pv-quote', '“' + item.evidence_quote + '”');
+  if (quoteEl) card.appendChild(quoteEl);
 
   const actions = elem('div', 'pv-actions');
   const toggle = elem('button', 'pv-toggle');
+  toggle.setAttribute('aria-pressed', String(!!item.shared));
   const edit = elem('button', 'pv-edit', 'Edit');
   actions.appendChild(toggle); actions.appendChild(edit);
+  // Separate control for the exact verbatim quote (audit #4).
+  let quoteToggle = null;
+  if (item.evidence_quote) {
+    quoteToggle = elem('button', 'pv-quote-toggle');
+    actions.appendChild(quoteToggle);
+  }
   card.appendChild(actions);
 
   function applyShared() {
     card.classList.toggle('private', !item.shared);
     toggle.textContent = item.shared ? 'Sharing ✓' : 'Private';
     toggle.classList.toggle('off', !item.shared);
+    toggle.setAttribute('aria-pressed', String(!!item.shared));
   }
-  applyShared();
+  function applyQuote() {
+    if (!quoteToggle) return;
+    quoteToggle.textContent = item.includeQuote ? 'My exact words: on' : 'My exact words: off';
+    quoteToggle.classList.toggle('off', !item.includeQuote);
+    quoteToggle.setAttribute('aria-pressed', String(!!item.includeQuote));
+    if (quoteEl) quoteEl.style.display = item.includeQuote ? '' : 'none';
+  }
+  applyShared(); applyQuote();
   toggle.addEventListener('click', () => { item.shared = !item.shared; applyShared(); });
+  if (quoteToggle) quoteToggle.addEventListener('click', () => { item.includeQuote = !item.includeQuote; applyQuote(); });
 
   let ta = null;
   edit.addEventListener('click', () => {
@@ -706,7 +762,10 @@ function buildPreviewItem(item) {
       card.insertBefore(ta, textEl.nextSibling);
       edit.textContent = 'Save';
     } else {
+      const reworded = ta.value.trim() && ta.value.trim() !== item.text;
       item.text = ta.value.trim() || item.text;
+      // If they reworded it, default the exact quote OFF — their words, their call.
+      if (reworded && item.evidence_quote) { item.includeQuote = false; applyQuote(); }
       textEl.textContent = '';
       appendTextWithLineBreaks(textEl, item.text);
       textEl.style.display = '';
@@ -739,11 +798,17 @@ async function sendParentReport() {
   // FREEZE: approved (shared) items with their possibly-edited text. No Prompt B
   // re-call. Personalized fields (growth horizon, confidence, program fit) now
   // travel as approved items only — nothing personalized bypasses the veto.
+  const items = window.previewItems
+    .filter(i => i.shared)
+    // Exact quote only travels if the teen kept "include my words" on.
+    .map(i => ({ id: i.id, category: i.category, text: i.text, evidence_quote: i.includeQuote === false ? null : i.evidence_quote }));
+  const supportEl = document.getElementById('pvSupport');
+  const supportText = supportEl && supportEl.value.trim();
+  if (supportText) items.push({ id: 'sr1', category: 'support_request', text: supportText, evidence_quote: null });
   const approved_report = {
-    shareable_items: window.previewItems
-      .filter(i => i.shared)
-      .map(i => ({ id: i.id, category: i.category, text: i.text, evidence_quote: i.evidence_quote })),
-    fixed_framing: draft.fixed_framing || null
+    shareable_items: items,
+    fixed_framing: draft.fixed_framing || null,
+    parent_action: draft.parent_action || ''   // generic parenting guidance, not a teen disclosure
   };
 
   try {
@@ -1118,6 +1183,14 @@ function showScreen(name) {
   ['loading', 'error', 'resume', 'chat', 'result', 'preview', 'sent'].forEach(s => {
     const el = document.getElementById('screen-' + s);
     if (el) el.style.display = (s === name) ? 'flex' : 'none';
+  });
+  // Move keyboard focus to the new screen's heading (rAF so content rendered
+  // right after this call exists). Helps screen-reader and keyboard users.
+  requestAnimationFrame(() => {
+    const active = document.getElementById('screen-' + name);
+    if (!active) return;
+    const h = active.querySelector('h1, h2, h3');
+    if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) {} }
   });
 }
 

@@ -13,7 +13,8 @@
       --good: #6fd3a0; --warn: #f0c674; --danger: #ffb4b4;
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
+    html, body { height: 100%; min-height: 100dvh; margin: 0; }
+    body { padding-bottom: env(safe-area-inset-bottom); }
     body {
       background: var(--bg); color: var(--text); line-height: 1.5;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -139,8 +140,14 @@
     .pv-quote { margin: 10px 0 0; padding-left: 12px; border-left: 3px solid var(--good); font-style: italic; }
     .pv-edit-area { width: 100%; margin-top: 6px; min-height: 70px; padding: 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg); color: var(--text); font: inherit; font-size: 15px; resize: vertical; }
     .pv-actions { display: flex; gap: 8px; margin-top: 12px; }
-    .pv-toggle, .pv-edit { font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
+    .pv-toggle, .pv-edit, .pv-quote-toggle { font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; font-family: inherit; }
     .pv-toggle { border-color: var(--good); color: var(--good); }
+    .pv-quote-toggle { border-color: var(--good); color: var(--good); font-size: 12px; }
+    .pv-quote-toggle.off { border-color: var(--line); color: var(--muted); }
+    .pv-support { margin: 22px 0 0; }
+    .pv-support-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 7px; }
+    .pv-support-input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font: inherit; font-size: 14px; resize: vertical; }
+    .pv-support-input:focus { outline: none; border-color: var(--accent); }
     .pv-toggle.off { border-color: var(--line); color: var(--muted); }
     .pv-readonly { margin: 22px 0; padding: 16px; background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; }
     .pv-ro-title { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
@@ -158,6 +165,13 @@
     @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
     @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Accessibility: clear focus rings + honor reduced-motion. */
+    :focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+      .message { opacity: 1 !important; }
+    }
   </style>
 </head>
 <body>
@@ -199,14 +213,14 @@
         <h1 id="chatHeading">Teen Check</h1>
       </div>
       <div class="messages-area" id="messagesArea">
-        <div id="messages"></div>
+        <div id="messages" aria-live="polite" aria-atomic="false" role="log"></div>
       </div>
       <div class="input-controls">
         <button class="ctrl-btn" id="skipBtn" type="button">Skip this one</button>
         <button class="ctrl-btn ctrl-end" id="endBtn" type="button">End &amp; clear this device</button>
       </div>
       <div class="input-bar" id="inputBar">
-        <textarea id="userInput" rows="1" placeholder="Type your answer…"></textarea>
+        <textarea id="userInput" rows="1" placeholder="Type your answer…" aria-label="Type your answer"></textarea>
         <button id="sendButton">Send</button>
       </div>
     </div>
