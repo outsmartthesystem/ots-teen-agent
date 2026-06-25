@@ -7,8 +7,10 @@ result for the **teen** and a separate, **teen-approved** report for the **paren
 
 Architecturally it forks the `ots-deep-work` skeleton (Express on Render, `/api/chat`
 Anthropic proxy, rate limiting, static-file security) but diverges in the model layer:
-a **two-prompt** flow (interview → scoring), four safety sentinels, a preview/veto
-gate before anything reaches the parent, and the teen agent's **own** Make webhook.
+a **four-prompt** flow — A (interview) → B (scoring), plus an optional C (money-decision
+scenarios) → D (scenario scoring) — four safety sentinels, a preview/veto gate before
+anything reaches the parent, server-side safety routing (direct email alerts), and the
+teen agent's **own** Make webhook.
 
 ## Status
 
@@ -52,7 +54,10 @@ end: a real approved report rendered an email and arrived in the parent inbox. T
 webhook URL is server-side only (the browser never sees it) — set it as
 `TEEN_MAKE_WEBHOOK_URL` in Render.
 
-Not yet built: the safety backend. See **Roadmap** below.
+The safety backend (server-side sentinel detection + direct email alerts to a
+responder) **is built and live-verified**. The remaining launch gate is the
+`[NEEDS COUNSEL]` policy in `docs/SAFETY-SOP.md`, plus the audit's P0 rearchitecture
+(opaque server-side sessions). See **Roadmap** below.
 
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
 regenerates `prompts.js` (the runtime copy the frontend loads).
@@ -62,7 +67,7 @@ regenerates `prompts.js` (the runtime copy the frontend loads).
 ```bash
 npm install
 cp .env.example .env        # then fill in the values
-npm start                   # http://localhost:3000
+npm run dev                 # node --env-file=.env (Node >= 20.6); http://localhost:3000
 ```
 
 Open `/register.html`, fill in the parent + teen fields, and you get the teen's

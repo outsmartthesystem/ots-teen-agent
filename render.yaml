@@ -2,16 +2,24 @@ services:
   - type: web
     name: ots-teen-agent
     runtime: node
-    plan: free
+    plan: starter
     buildCommand: npm install
     startCommand: node server.js
     healthCheckPath: /api/health
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: ANTHROPIC_API_KEY      # interview + scoring
         sync: false
-      - key: TOKEN_SIGNING_SECRET
+      - key: TOKEN_SIGNING_SECRET   # signs session tokens
         sync: false
-      - key: TEEN_MAKE_WEBHOOK_URL
+      - key: TEEN_MAKE_WEBHOOK_URL  # parent-report delivery (teen agent's OWN webhook)
         sync: false
-      - key: PUBLIC_BASE_URL
+      - key: MAKE_SHARED_SECRET     # gates the parent-report webhook
+        sync: false
+      - key: EMAIL_USER             # Gmail account for safety alerts
+        sync: false
+      - key: EMAIL_PASS             # Gmail app password
+        sync: false
+      - key: SAFETY_ALERT_TO        # where CRISIS/ABUSE alerts go (defaults to EMAIL_USER)
+        sync: false
+      - key: PUBLIC_BASE_URL        # optional; clean teen-link base
         sync: false

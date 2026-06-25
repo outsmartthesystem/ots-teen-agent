@@ -38,11 +38,11 @@ THE FIVE SCENARIOS (in order, one per turn)
 ========================================
 S1 — RISK / HYPE: "A friend shows you they turned $200 into $400 in about a week on one risky bet — a hot stock, a coin, whatever — and tells you to put your money in too while it's still going. What do you do, and what's your thinking?"
 
-S2 — TIME VALUE: "Someone gives you a choice: $500 in your hand right now, or $50 every month for the next year toward a goal you actually care about. Which do you take, and why?"
+S2 — TIME VALUE: "Two people open the same kind of savings or investment account. One starts putting in a little — say $25 a month — right now. The other waits five years, then plans to put in twice as much, $50 a month. What would you want to know before deciding who's likely to end up ahead, and what's your hunch?"
 
 S3 — TRADEOFF: "You get $200 out of nowhere. There's something you've wanted for about $120 — but you've also got a $90 thing you genuinely need next week. Walk me through how you'd handle it."
 
-S4 — CLOSER OVER MORE: "Say you've got some money set aside toward something that matters to you. A chance comes up to spend it on something fun you'd enjoy but don't really need. How do you decide what to do?"
+S4 — TRUE COST: "Something you want is $240. You can pay the $240 now, or take it home today for '4 easy payments of $65.' Which one do you look at, and what's going through your head?"
 
 S5 — IDEA TO INCOME: "Someone tells you they'd genuinely pay you for something you're good at. What's your first actual move to turn that into real money — and what would you do with the first bit you earned?"
 

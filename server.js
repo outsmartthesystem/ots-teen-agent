@@ -14,7 +14,21 @@ const safetyMailer = (process.env.EMAIL_USER && process.env.EMAIL_PASS)
 
 const app = express();
 app.set('trust proxy', 1); // Render terminates TLS at a proxy; needed for real client IPs.
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '256kb' })); // text-only payloads; 10mb was excessive
+
+// Security headers on every response. The app loads only same-origin assets
+// (jsPDF is vendored locally), so a tight CSP is safe. API responses are
+// no-store so session/result JSON isn't cached on shared devices.
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 // ─── STATIC FILE SECURITY ──────────────────────────────────────────────────
 // express.static(__dirname) serves the whole repo, so explicitly block backend
@@ -429,17 +443,19 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // ─── HEALTH ────────────────────────────────────────────────────────────────
+// Always 200 (liveness for Render), but reports a readiness signal: `ready` is
+// false and `missing` lists any launch-critical config that's absent, so a fresh
+// blueprint deploy that came up without (e.g.) the safety email is visible.
 app.get('/api/health', (req, res) => {
-  res.json({
-    ok: true,
-    service: 'ots-teen-agent',
-    configured: {
-      anthropic: !!process.env.ANTHROPIC_API_KEY,
-      token_secret: !!process.env.TOKEN_SIGNING_SECRET,
-      teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
-      safety_email: !!safetyMailer
-    }
-  });
+  const configured = {
+    anthropic: !!process.env.ANTHROPIC_API_KEY,
+    token_secret: !!process.env.TOKEN_SIGNING_SECRET,
+    teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
+    make_secret: !!process.env.MAKE_SHARED_SECRET,
+    safety_email: !!safetyMailer
+  };
+  const missing = Object.keys(configured).filter(k => !configured[k]);
+  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, configured, missing });
 });
 
 app.use(express.static(path.join(__dirname)));

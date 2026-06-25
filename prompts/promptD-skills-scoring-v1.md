@@ -44,7 +44,7 @@ CONFIDENCE: high = 4–5 substantive responses; moderate = 3; limited = 1–2; i
 ========================================
 STEP 2: PER-SCENARIO + SUMMARY
 ========================================
-For each of the five scenarios, in order, note the lesson it maps to and one line on what they showed, with a verbatim quote when there is one. The lessons, in order: Changing Your Environment (S1 risk/hype), Compound Effect (S2 time value), Budgeting (S3 tradeoff), Closer Over More (S4), Idea-to-Income (S5).
+For each of the five scenarios, in order, note the lesson it maps to and one line on what they showed, with a verbatim quote when there is one. The lessons, in order: Changing Your Environment (S1 risk/hype — did they pause on the hype and think about downside?), Compound Effect (S2 two savers, time vs. amount — do they sense that starting early and consistency matter, and what do they want to know?), Budgeting (S3 need-vs-want tradeoff), Closer Over More (S4 true cost — do they see the total "4 easy payments" cost and the trap of "more now"?), Idea-to-Income (S5 first real step to get paid).
 
 teen_summary: one warm, plain teen-facing line on what their money judgment looks like and the single judgment habit that would sharpen it. Frame growth as a skill.
 parent_line: one calm parent-facing line on their demonstrated money judgment, explicitly a complement to the readiness snapshot, never a verdict or a grade.

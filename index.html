@@ -53,6 +53,11 @@
     .resources strong { color: var(--warn); display: block; margin-bottom: 4px; }
     .resources p { margin: 0; font-size: 14px; }
 
+    .input-controls { display: flex; justify-content: space-between; gap: 10px; padding: 8px 16px 0; }
+    .ctrl-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; padding: 5px 11px; border-radius: 8px; cursor: pointer; font-family: inherit; }
+    .ctrl-btn:hover { color: var(--text); border-color: var(--accent); }
+    .ctrl-end { color: #c98; border-color: transparent; }
+    .ctrl-end:hover { color: var(--danger); border-color: #5a2730; }
     .input-bar { border-top: 1px solid var(--line); padding: 14px 16px; display: flex; gap: 10px; align-items: flex-end; }
     #userInput { flex: 1; resize: none; min-height: 44px; max-height: 140px; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 15px; font-family: inherit; }
     #userInput:focus { outline: none; border-color: var(--accent); }
@@ -89,13 +94,16 @@
     .mj-scenario-read { font-size: 13.5px; color: var(--text); }
     .mj-scenario-quote { font-size: 12.5px; font-style: italic; color: var(--muted); margin-top: 5px; }
     .bars { display: flex; flex-direction: column; gap: 10px; margin: 0 0 26px; }
-    .bar-row { display: grid; grid-template-columns: 132px 1fr 24px; align-items: center; gap: 10px; }
+    .bar-row { display: grid; grid-template-columns: 116px 1fr 84px; align-items: center; gap: 10px; }
+    .bars-legend { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+    .evidence-block { margin: 26px 0 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .evidence-block .stage-badge { margin-bottom: 10px; }
     .bar-label { font-size: 13px; color: var(--muted); }
     .bar-track { height: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
     .bar-track.empty { background: transparent; border-style: dashed; display: flex; align-items: center; overflow: visible; }
     .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); border-radius: 999px; transition: width .5s ease; }
     .bar-empty { font-size: 11px; color: var(--muted); padding-left: 8px; white-space: nowrap; }
-    .bar-score { font-size: 13px; font-weight: 600; text-align: right; }
+    .bar-score { font-size: 11px; font-weight: 600; text-align: right; color: var(--accent-2); }
     .bar-score.muted { color: var(--muted); font-weight: 400; }
     .result-section { margin: 0 0 22px; }
     .section-title { font-size: 13px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
@@ -106,7 +114,15 @@
     .result-section.pathway { background: #101a16; border: 1px solid #1d4534; border-radius: 12px; padding: 16px; }
     .choice-title { font-size: 13px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 24px 0 10px; }
     .choice { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .choice-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 16px; font-size: 14px; }
+    .choice-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 16px; font-size: 14px; color: var(--text); font-family: inherit; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; }
+    .choice-card:hover { border-color: var(--accent-2); }
+    .ots-panel { margin: 14px 0 0; padding: 16px; background: #0e1830; border: 1px solid var(--accent); border-radius: 12px; }
+    .ots-panel-title { font-size: 15px; font-weight: 700; color: var(--accent-2); margin-bottom: 6px; }
+    .ots-panel-text { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+    .ots-lessons { margin: 0 0 14px; padding-left: 20px; }
+    .ots-lessons li { font-size: 14px; color: var(--text); margin-bottom: 4px; }
+    .ots-link { display: inline-block; width: auto; text-decoration: none; margin: 0; }
+    .solo-note { margin: 12px 0 0; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; font-size: 13.5px; color: var(--text); }
     .choice-card.primary { border-color: var(--accent); background: #0e1830; }
     .next-note { margin-top: 24px; padding: 12px 14px; background: var(--panel-2); border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 13px; }
     @media (max-width: 480px) { .choice { grid-template-columns: 1fr; } .bar-row { grid-template-columns: 104px 1fr 20px; } }
@@ -184,6 +200,10 @@
       </div>
       <div class="messages-area" id="messagesArea">
         <div id="messages"></div>
+      </div>
+      <div class="input-controls">
+        <button class="ctrl-btn" id="skipBtn" type="button">Skip this one</button>
+        <button class="ctrl-btn ctrl-end" id="endBtn" type="button">End &amp; clear this device</button>
       </div>
       <div class="input-bar" id="inputBar">
         <textarea id="userInput" rows="1" placeholder="Type your answer…"></textarea>

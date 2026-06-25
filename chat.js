@@ -340,22 +340,28 @@ async function runScoring() {
 
     if (!parsed) throw new Error('Could not parse scoring JSON');
 
-    // Scoring has its own STEP 0 safety pass — honor it.
+    // Scoring has its own STEP 0 safety pass — honor it through the same handler
+    // (server report + device purge + report block), then stop without a score.
     if (parsed.safety_check && parsed.safety_check.clear === false) {
       window.blockParentReport = true;
-      reportSafetyEvent(parsed.safety_check.flag || 'DISTRESS'); // route the Prompt B safety result
-      showResources(parsed.safety_check.flag || 'SUPPORT');
+      handleSafety(parsed.safety_check.flag || 'DISTRESS');
       addStatus('Thanks for being honest with me. There’s no scored result here — what you shared matters more than that.');
       return;
     }
 
     window.scoringResult = parsed;
     renderResult(parsed);
-    console.log('SCORING RESULT (full):', parsed);
   } catch (e) {
     status.remove();
-    addStatus('Your result hit a snag generating, but your answers are saved. Refresh in a minute and it’ll pick back up.');
     console.error('Scoring error:', e);
+    // The transcript is still in memory this page session — offer a real retry
+    // rather than telling them to refresh (a refresh would NOT resume it).
+    addStatus('Your result hit a snag while generating — your answers are still right here.');
+    const retry = elem('button', 'btn btn-primary', 'Try generating my result again');
+    retry.style.marginTop = '10px';
+    retry.addEventListener('click', () => { retry.remove(); runScoring(); });
+    document.getElementById('messages').appendChild(retry);
+    scrollToBottom();
   }
 }
 
@@ -381,58 +387,29 @@ function renderResult(parsed) {
   const level = parsed.level || {};
   const root = document.getElementById('resultBody');
   root.innerHTML = '';
+  const name = window.session.teen_first_name;
 
-  // Stage badge (hidden when fewer than 4 dimensions were assessable).
-  if (t.stage_display) {
-    root.appendChild(elem('div', 'stage-badge', t.stage_display));
-    if (level.partial_note) {
-      root.appendChild(elem('div', 'partial-note', 'Based on partial evidence — a few questions got skipped, which is fine.'));
-    }
-  }
+  // Reordered so the teen feels UNDERSTOOD before EVALUATED — goal, strength,
+  // unlock, and the move come first; the stage/bars/evidence are support below.
 
-  root.appendChild(elem('h1', 'result-h1', window.session.teen_first_name + ", here's where you are"));
-
-  // The mirror — their goal reflected back.
+  // 1) Their goal, reflected back.
+  root.appendChild(elem('h1', 'result-h1', name + ", here's where you are"));
   if (t.goal_reflected) {
     const m = elem('p', 'mirror');
     appendTextWithLineBreaks(m, t.goal_reflected);
     root.appendChild(m);
   }
 
-  // Five-dimension chart.
-  if (Array.isArray(t.bars) && t.bars.length) {
-    root.appendChild(buildBars(t.bars));
-  }
-
-  // Honest confidence line — tempers the precise-looking bars.
-  if (t.confidence_note) {
-    const c = elem('p', 'confidence-note');
-    appendTextWithLineBreaks(c, t.confidence_note);
-    root.appendChild(c);
-  }
-
-  // The gap: where you are → where you could be.
-  if (t.stage_display || t.growth_horizon) {
-    root.appendChild(buildGapSection(t));
-  }
-
-  // Money judgment (from the optional scenario check), if completed.
-  if (window.moneyJudgment) {
-    root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
-  }
-
-  // Strength + verbatim evidence quote.
+  // 2) What you've already got (strength + verbatim quote).
   const strength = t.demonstrated_strength;
   if (strength && strength.text) {
     const sec = section('What you’ve already got');
     sec.appendChild(para(strength.text));
-    if (strength.evidence_quote) {
-      sec.appendChild(elem('blockquote', 'evidence', '“' + strength.evidence_quote + '”'));
-    }
+    if (strength.evidence_quote) sec.appendChild(elem('blockquote', 'evidence', '“' + strength.evidence_quote + '”'));
     root.appendChild(sec);
   }
 
-  // Biggest unlock (the growth area framed as a learnable skill).
+  // 3) Biggest unlock.
   const unlock = t.biggest_unlock;
   if (unlock && (unlock.skill || unlock.framing)) {
     const sec = section('Your biggest unlock' + (unlock.skill ? ': ' + unlock.skill : ''));
@@ -440,14 +417,34 @@ function renderResult(parsed) {
     root.appendChild(sec);
   }
 
-  // Seven-day move.
+  // 4) Seven-day move.
   if (t.seven_day_move) {
     const sec = section('This week', 'move');
     sec.appendChild(para(t.seven_day_move));
     root.appendChild(sec);
   }
 
-  // Optional skills check — offered once, when not yet done and not safety-blocked.
+  // 5) The evidence behind it — stage, confidence, the dimension map. Placed
+  //    AFTER the narrative so it reads as support, not a report card. Bars show
+  //    qualitative labels (Starting…Systemized), not bare 1–5 grades.
+  const evid = elem('div', 'evidence-block');
+  evid.appendChild(elem('h3', 'section-title', 'Why I’m saying that'));
+  if (t.stage_display) {
+    evid.appendChild(elem('span', 'stage-badge', t.stage_display));
+    if (level.partial_note) evid.appendChild(elem('div', 'partial-note', 'Based on partial evidence — some questions got skipped, which is fine.'));
+  }
+  if (t.confidence_note) { const c = elem('p', 'confidence-note'); appendTextWithLineBreaks(c, t.confidence_note); evid.appendChild(c); }
+  if (Array.isArray(t.bars) && t.bars.length) {
+    evid.appendChild(elem('p', 'bars-legend', 'These aren’t grades — they’re where each money skill is starting from right now.'));
+    evid.appendChild(buildBars(t.bars));
+  }
+  root.appendChild(evid);
+  if (t.stage_display || t.growth_horizon) root.appendChild(buildGapSection(t));
+
+  // 6) Money decisions (from the optional scenario check), if completed.
+  if (window.moneyJudgment) root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
+
+  // 7) Optional skills check — offered once.
   if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
     const card = elem('div', 'skills-optin');
     card.appendChild(elem('div', 'skills-optin-title', 'Want a sharper read?'));
@@ -458,28 +455,38 @@ function renderResult(parsed) {
     root.appendChild(card);
   }
 
-  // High-scorer pathway (only present for Building / Outsmarting).
+  // 8) High-scorer pathway.
   if (t.high_scorer_pathway) {
     const sec = section('Where this can go', 'pathway');
     sec.appendChild(para(t.high_scorer_pathway));
     root.appendChild(sec);
   }
 
-  // The two-way choice — never "your score is low so you need this".
+  // 9) Two ways forward — both are real, clickable controls.
   if (t.choice && (t.choice.solo || t.choice.ots)) {
     root.appendChild(elem('h3', 'choice-title', 'Two ways to go from here'));
     const wrap = elem('div', 'choice');
-    if (t.choice.solo) { const c = elem('div', 'choice-card'); appendTextWithLineBreaks(c, t.choice.solo); wrap.appendChild(c); }
-    if (t.choice.ots)  { const c = elem('div', 'choice-card primary'); appendTextWithLineBreaks(c, t.choice.ots); wrap.appendChild(c); }
+    if (t.choice.solo) {
+      const c = elem('button', 'choice-card'); appendTextWithLineBreaks(c, t.choice.solo);
+      c.addEventListener('click', () => markSoloMove(wrap));
+      wrap.appendChild(c);
+    }
+    if (t.choice.ots) {
+      const c = elem('button', 'choice-card primary'); appendTextWithLineBreaks(c, t.choice.ots);
+      c.addEventListener('click', showOtsPath);
+      wrap.appendChild(c);
+    }
     root.appendChild(wrap);
+    const panel = elem('div', 'ots-panel'); panel.id = 'otsPanel'; panel.style.display = 'none';
+    root.appendChild(panel);
   }
 
-  // Save-as-PDF keepsake of the result.
+  // 10) Save-as-PDF keepsake.
   const pdfBtn = elem('button', 'btn btn-ghost result-pdf', '⤓  Save my result as a PDF');
   pdfBtn.addEventListener('click', downloadResultPDF);
   root.appendChild(pdfBtn);
 
-  // Bridge to the preview/veto step.
+  // 11) Sharing CTA.
   const parent = window.session.parent_first_name;
   if (window.blockParentReport) {
     root.appendChild(elem('div', 'next-note', 'Nothing from this goes to ' + parent + '. This result is just for you.'));
@@ -771,6 +778,8 @@ function renderSent(didSend) {
     : 'Nothing went to ' + parent + '. This stays with you.'));
 }
 
+// Qualitative labels so a "2" doesn't read like a school grade (audit UI #6).
+const SCORE_LABELS = { 1: 'Starting', 2: 'Developing', 3: 'Practicing', 4: 'Strong', 5: 'Systemized' };
 function buildBars(bars) {
   const wrap = elem('div', 'bars');
   bars.forEach(b => {
@@ -787,11 +796,45 @@ function buildBars(bars) {
       fill.style.width = (clamp(b.score, 0, 5) / 5 * 100) + '%';
       track.appendChild(fill);
       row.appendChild(track);
-      row.appendChild(elem('div', 'bar-score', String(b.score)));
+      row.appendChild(elem('div', 'bar-score', SCORE_LABELS[b.score] || String(b.score)));
     }
     wrap.appendChild(row);
   });
   return wrap;
+}
+
+// Clickable OTS path — shows the teen's actual recommended first skills, not a
+// generic sales card (audit UI #7 — the biggest conversion gap).
+function showOtsPath() {
+  const panel = document.getElementById('otsPanel');
+  if (!panel) return;
+  if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+  const pf = (window.scoringResult && window.scoringResult.parent_report_draft && window.scoringResult.parent_report_draft.program_fit) || {};
+  const lessons = Array.isArray(pf.lessons) ? pf.lessons : [];
+  panel.innerHTML = '';
+  panel.appendChild(elem('div', 'ots-panel-title', 'Your Outsmart the System path'));
+  if (lessons.length) {
+    panel.appendChild(elem('p', 'ots-panel-text', 'Based on your result, your first skills would be:'));
+    const ul = document.createElement('ul'); ul.className = 'ots-lessons';
+    lessons.forEach(l => { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
+    panel.appendChild(ul);
+  } else {
+    panel.appendChild(elem('p', 'ots-panel-text', 'A guided system for turning what you just saw into real skills — at your pace, with your goal at the center.'));
+  }
+  const link = document.createElement('a');
+  link.className = 'btn btn-primary ots-link';
+  link.href = 'https://outsmartthesystem.org';
+  link.target = '_blank'; link.rel = 'noopener';
+  link.textContent = 'See the program →';
+  panel.appendChild(link);
+  panel.style.display = 'block';
+}
+
+function markSoloMove(wrap) {
+  if (document.getElementById('soloNote')) return;
+  const note = elem('div', 'solo-note', 'Love it — your move is up there under “This week.” Screenshot it or save the PDF so you don’t lose it.');
+  note.id = 'soloNote';
+  wrap.parentNode.insertBefore(note, wrap.nextSibling);
 }
 
 // The five OTS stages, in order — used to draw the "where you could be" ladder.
@@ -1096,11 +1139,32 @@ function autoResize(el) {
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// One-tap Skip — no need to type "skip" (audit UI #2).
+function skipQuestion() {
+  const sendBtn = document.getElementById('sendButton');
+  if (window.halted || (sendBtn && sendBtn.disabled)) return;
+  const input = document.getElementById('userInput');
+  if (input) { input.value = 'skip'; }
+  sendMessage();
+}
+
+// End & clear this device — purges the transcript and leaves. Important when the
+// app is on a shared or parent's device.
+function endAndClear() {
+  if (!confirm('End now and clear this from this device? Your answers won’t be saved or sent.')) return;
+  clearSession();
+  location.replace('/register.html');
+}
+
 // Input wiring (Enter to send, Shift+Enter for newline).
 document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('userInput');
   const sendBtn = document.getElementById('sendButton');
   if (sendBtn) sendBtn.addEventListener('click', sendMessage);
+  const skipBtn = document.getElementById('skipBtn');
+  if (skipBtn) skipBtn.addEventListener('click', skipQuestion);
+  const endBtn = document.getElementById('endBtn');
+  if (endBtn) endBtn.addEventListener('click', endAndClear);
   if (input) {
     input.addEventListener('input', () => autoResize(input));
     input.addEventListener('keydown', (e) => {
