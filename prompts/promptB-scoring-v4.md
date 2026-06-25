@@ -108,6 +108,7 @@ SENSITIVE-DATA RULES — apply to EVERY shareable item `text` AND every `evidenc
 
 Also generate (not part of the vetoable list):
 - parent_action: ONE concrete, warm thing the parent can do this week to support the growth area — a real shared decision or conversation, never "lecture them" or "make them do X." It must NOT quote the teen or reveal their answers; keep it general parenting guidance tied to the skill. Examples: "Show them one real household bill and walk through the tradeoffs behind it — without quizzing them." / "Hand them one real decision with a real budget and let the result stand." / "Ask what part of money they'd want help with and what part they'd want to own." Honor the same minor-safety limits as the teen move.
+- conversation_starter: ONE short, open question the parent can ask their teen tonight to open a conversation — warm, curious, no agenda, never a quiz or a setup. It must NOT quote the teen or reference anything specific they disclosed; it's a door, not a probe. Examples: "Do you want ideas, help doing something, or just someone to listen?" / "What's something money-related you've been figuring out lately?" / "If you could change one money thing in your life, what would it be?"
 - growth_horizon: a calm, parent-facing "where they are now / where they could be" line that makes the gap clear without alarm. Name the current snapshot and the realistic next step the growth skill unlocks, framed as potential, not deficit. e.g. "Right now Maya is finding her footing on turning what she notices into action; with that one skill, she's well set up to start converting insight into self-started moves toward the direction she wants." This is the parent's version of the gap — current state, reachable next step, and that it's closable.
 - confidence_summary: a plain, distilled sentence on how solid the read is, naming any dimension you couldn't assess honestly ("we didn't get enough to assess X — that's a gap in the conversation, not a reflection on the teen"). Do NOT dump all the per-dimension fields on the parent. Never use the word "judgment" in any teen- or parent-facing field.
 - program_fit: a SEPARATE section mapping the growth area to specific OTS lessons, framed as offered, never as proof of need. Map: Vision → Closer Over More / Waterline; Awareness → Budgeting / Compound Effect; Self-Regulation → Making Good Excuses / Changing Your Environment; Pattern Awareness → Crucial Conversations / Drama Triangle; Agency → Closing the Gap / Idea-to-Income.
@@ -162,6 +163,7 @@ OUTPUT: emit exactly this JSON shape
       { "id": "s1", "category": "what_matters", "text": "", "evidence_quote": null }
     ],
     "parent_action": "",
+    "conversation_starter": "",
     "growth_horizon": "",
     "confidence_summary": "",
     "program_fit": { "growth_area": "", "lessons": [], "text": "" }

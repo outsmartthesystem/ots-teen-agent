@@ -134,7 +134,8 @@ const INTERVIEW_SUB = (s) => SERVER_PROMPTS.A
   .split('{{TEEN_AGE}}').join(String(s.teen_age));
 const SKILLS_SUB = (s) => SERVER_PROMPTS.C
   .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
-  .split('{{TEEN_AGE}}').join(String(s.teen_age));
+  .split('{{TEEN_AGE}}').join(String(s.teen_age))
+  .split('{{TEEN_CONTEXT}}').join((s.turns && s.turns.context_hint) ? s.turns.context_hint : 'their own goals and interests');
 
 // ─── SESSION COOKIE ─────────────────────────────────────────────────────────
 // The teen link carries an opaque session id (?s=…). On open it's exchanged for
@@ -468,7 +469,10 @@ app.post('/api/score', async (req, res) => {
       return res.json({ safety: flag });
     }
     stripUnverifiedQuotes(parsed, transcript); // drop any quote not actually in the transcript
-    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true });
+    // Capture a short goal/interest hint so the optional Decision Lab can personalize a scenario.
+    const contextHint = (parsed.teen_output && parsed.teen_output.goal_reflected) ? String(parsed.teen_output.goal_reflected).slice(0, 300) : '';
+    const mergedTurns = Object.assign({}, session.turns || {}, { context_hint: contextHint });
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns });
     sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     res.json({ result: parsed }); // no parent_email anywhere in the model output
   } catch (e) {
@@ -542,9 +546,13 @@ const REPORT_CATEGORY_LABEL = {
   support_request: 'How they’d like your support'
 };
 function buildParentEmail(report, teenName, parentName) {
-  const items = Array.isArray(report.shareable_items) ? report.shareable_items : [];
+  const allItems = Array.isArray(report.shareable_items) ? report.shareable_items : [];
+  const items = allItems.filter(it => it.category !== 'support_request');
+  const support = allItems.find(it => it.category === 'support_request' && it.text); // teen's ask → Handshake
   const ff = report.fixed_framing || {};
-  const pf = report.program_fit || {};
+  const hasHandshake = !!(support || report.parent_action || report.conversation_starter);
+
+  // ── HTML ──
   let h = '';
   h += `<p>Hi ${escHtml(parentName)},</p>`;
   h += `<p>${escHtml(teenName)} just completed the Outsmart the System Teen Check. They saw their own result first and chose what to share with you — here it is.</p>`;
@@ -556,12 +564,15 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) h += `<div style="margin-top:7px;font-style:italic;color:#555">&ldquo;${escHtml(it.evidence_quote)}&rdquo;</div>`;
     h += `</div>`;
   });
-  // growth horizon, confidence, and program fit now arrive as approved items
-  // above (teen-vetoable) — they are no longer auto-appended here.
-  if (report.parent_action) {
-    h += `<div style="margin:20px 0;padding:14px 16px;background:#f0fbf5;border:1px solid #cdeede;border-radius:10px">`;
-    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#3a9b6e;margin-bottom:5px">What you can do this week</div>`;
-    h += `<div style="color:#333">${escHtml(report.parent_action)}</div></div>`;
+  // Family Handshake — the teen's ask + your move + a way in, in one place.
+  if (hasHandshake) {
+    const row = (label, val, q) => `<div style="margin-bottom:11px"><div style="font-size:11px;color:#8a93a6;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">${label}</div><div style="color:#333">${q ? '&ldquo;' : ''}${escHtml(val)}${q ? '&rdquo;' : ''}</div></div>`;
+    h += `<div style="margin:22px 0;padding:16px 18px;background:#f0fbf5;border:1px solid #cdeede;border-radius:12px">`;
+    h += `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#3a9b6e;margin-bottom:11px;font-weight:600">A Family Handshake</div>`;
+    if (support) h += row(`What ${escHtml(teenName)} asked for`, support.text, false);
+    if (report.parent_action) h += row('Your move this week', report.parent_action, false);
+    if (report.conversation_starter) h += row('One question to ask', report.conversation_starter, true);
+    h += `</div>`;
   }
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     h += `<p style="font-weight:600;margin:18px 0 6px">A few things to keep in mind:</p><ul style="color:#444;margin:0;padding-left:20px">`;
@@ -571,6 +582,7 @@ function buildParentEmail(report, teenName, parentName) {
   h += `<p style="font-size:12px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:12px">Outsmart the System &middot; outsmartthesystem.org<br>This snapshot was approved by ${escHtml(teenName)} before it was sent.</p>`;
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.55;font-size:15px">${h}</div>`;
 
+  // ── plaintext ──
   let t = `Hi ${parentName},\n\n${teenName} just completed the Outsmart the System Teen Check. They saw their own result first and chose what to share with you.\n\n`;
   if (ff.limitation) t += ff.limitation + '\n\n';
   items.forEach(it => {
@@ -578,7 +590,13 @@ function buildParentEmail(report, teenName, parentName) {
     if (it.evidence_quote) t += '"' + it.evidence_quote + '"\n';
     t += '\n';
   });
-  if (report.parent_action) t += 'WHAT YOU CAN DO THIS WEEK\n' + report.parent_action + '\n\n';
+  if (hasHandshake) {
+    t += 'A FAMILY HANDSHAKE\n';
+    if (support) t += '- What ' + teenName + ' asked for: ' + support.text + '\n';
+    if (report.parent_action) t += '- Your move this week: ' + report.parent_action + '\n';
+    if (report.conversation_starter) t += '- One question to ask: "' + report.conversation_starter + '"\n';
+    t += '\n';
+  }
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
     t += 'A few things to keep in mind:\n';
     ff.what_not_to_do.forEach(x => t += '- ' + x + '\n');
@@ -630,7 +648,7 @@ app.post('/api/parent-report', async (req, res) => {
   const support = (req.body && typeof req.body.support_request === 'string') ? req.body.support_request.trim().slice(0, 500) : '';
   if (support) approvedItems.push({ id: 'sr1', category: 'support_request', text: support, evidence_quote: null });
 
-  const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null, parent_action: draft.parent_action || '' };
+  const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null, parent_action: draft.parent_action || '', conversation_starter: draft.conversation_starter || '' };
 
   // ATOMIC one-time claim: exactly one caller wins; concurrent/repeat callers and
   // safety-blocked sessions get false (no double-send race). (audit P2)
