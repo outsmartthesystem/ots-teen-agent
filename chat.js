@@ -84,13 +84,37 @@ async function boot() {
   }
 
   if (!linkId) {
-    const saved = loadSession();
-    if (saved) return showResume(saved);
     if (session.interview_complete) {
       return showError("This check is already complete.");
     }
+    // Resume mid-interview from the SERVER-held transcript (the device no longer
+    // stores it). If there are turns, rebuild and continue; otherwise start fresh.
+    try {
+      const r = await fetch('/api/interview/state');
+      if (r.ok) {
+        const st = await r.json();
+        if (st.turns && st.turns.length) return resumeFromServer(st.turns);
+      }
+    } catch (e) { /* fall through to a fresh start */ }
   }
   startInterview();
+}
+
+// Rebuild the chat from the server's stored transcript and let the teen continue.
+function resumeFromServer(turns) {
+  window.mode = 'interview';
+  showScreen('chat');
+  setHeading();
+  const messages = document.getElementById('messages');
+  while (messages.firstChild) messages.removeChild(messages.firstChild);
+  conversationHistory.length = 0;
+  turns.forEach(t => {
+    conversationHistory.push({ role: t.role, content: t.content });
+    if (t.role === 'user') addMessage(t.content, 'user');
+    else renderAssistantMessage(t.content);
+  });
+  scrollToBottom();
+  reEnableInput();
 }
 
 // ─── SYSTEM PROMPT ───────────────────────────────────────────────────────
@@ -114,9 +138,9 @@ function buildSkillsSystemPrompt() {
 function startInterview() {
   showScreen('chat');
   setHeading();
-  // Seed a hidden first user turn so the model produces its opening frame.
-  conversationHistory.push({ role: 'user', content: SEED_MARKER });
-  getAssistantTurn();
+  window.mode = 'interview';
+  // The server seeds the opening frame on the first (answer-less) turn.
+  requestTurn();
 }
 
 function showResume(saved) {
@@ -166,11 +190,14 @@ function sendMessage() {
   input.value = '';
   autoResize(input);
   activeHistory().push({ role: 'user', content: text });
-  getAssistantTurn();
+  requestTurn(text);
 }
 
-// ─── CORE TURN: call the model, handle sentinels, render, persist ────────
-async function getAssistantTurn() {
+// ─── CORE TURN: ask the server for the next message (Phase 4) ────────────
+// The browser sends only { answer } (or {} to open). The server holds the
+// prompt + transcript, injects the anchor, detects sentinels, and persists the
+// turn. We just render what comes back.
+async function requestTurn(answer) {
   const input = document.getElementById('userInput');
   const sendBtn = document.getElementById('sendButton');
   if (sendBtn) sendBtn.disabled = true;
@@ -178,83 +205,34 @@ async function getAssistantTurn() {
 
   const thinking = addThinking();
   const skills = window.mode === 'skills';
-  const hist = activeHistory();
-
-  // Anchor the model to the numbered question (interview only) without leaking
-  // scoring intent. Inject a neutral progress note into the last real user turn,
-  // then restore the clean text after a successful response. Skills mode (Prompt
-  // C) is self-paced over five ordered scenarios and needs no anchor.
-  const lastIdx = hist.length - 1;
-  const lastTurn = hist[lastIdx];
-  const isSeed = lastTurn && lastTurn.content === SEED_MARKER;
-  let cleanUserText = null;
-  if (!skills && lastTurn && lastTurn.role === 'user' && !isSeed && !window.interviewComplete) {
-    cleanUserText = lastTurn.content;
-    const q = estimateQuestion();
-    hist[lastIdx] = {
-      role: 'user',
-      content: `[Internal note: based on the conversation so far, ask the NEXT question from your list that hasn't been asked yet, in order — never skip ahead, never repeat one already asked (you're roughly on question ${q} of ${TOTAL_QUESTIONS}). One question only. Vary your acknowledgment — never repeat "Got it," and about half the time skip the acknowledgment and go straight to the question. Honor skips. Do not score, rate, or praise. Watch for safety.]\n\n${cleanUserText}`
-    };
-  }
-
-  const system = skills ? buildSkillsSystemPrompt() : buildInterviewSystemPrompt();
-  const endSentinel = skills ? SKILLS_SENTINEL : COMPLETE_SENTINEL;
+  const endpoint = skills ? '/api/skills/turn' : '/api/interview/turn';
 
   try {
-    let data = null, attempts = 0;
-    const maxAttempts = 4;
-    while (attempts < maxAttempts) {
-      attempts++;
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL_INTERVIEW,
-          max_tokens: 1200,
-          system,
-          messages: getApiMessages()
-          // auth is the session cookie (sent automatically, same-origin)
-        })
-      });
-      data = await response.json();
-
-      if (data.error && data.error.type === 'rate_limit_error' && attempts < maxAttempts) {
-        thinking.setText('One sec — catching my breath…');
-        await wait(attempts * 15000);
-        continue;
-      }
-      break;
-    }
-
-    if (!data || !data.content || !data.content[0]) {
-      throw new Error('Bad response: ' + JSON.stringify(data).slice(0, 300));
-    }
-
-    if (cleanUserText !== null) hist[lastIdx] = { role: 'user', content: cleanUserText };
-
-    const raw = data.content[0].text;
+    const r = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(answer ? { answer } : {})
+    });
+    let data = {};
+    try { data = await r.json(); } catch (e) {}
     thinking.remove();
 
-    // SAFETY FIRST — a safety sentinel overrides completion in every case.
-    const safety = raw.match(SAFETY_SENTINEL_RE);
-    const hasComplete = raw.includes(endSentinel);
-
-    const displayText = raw.replace(SAFETY_SENTINEL_RE, '')
-      .split(COMPLETE_SENTINEL).join('').split(SKILLS_SENTINEL).join('').trim();
-
-    hist.push({ role: 'assistant', content: displayText });
-    renderAssistantMessage(displayText);
-
-    if (safety) {
-      handleSafety(safety[1]);
-      if (!skills) saveSession();
+    if (r.status === 401) return showError("This check isn’t active anymore. Ask for a fresh link.");
+    if (r.status === 403) { window.halted = true; return showError("This check is closed."); }
+    if (!r.ok && !data.message && !data.safety && !data.complete) {
+      addMessage('Hit a small snag. Tap send again and we’ll pick right back up.', 'system');
       reEnableInput();
       return;
     }
 
-    if (!skills) saveSession();
+    if (data.message) {
+      (skills ? skillsHistory : conversationHistory).push({ role: 'assistant', content: data.message });
+      renderAssistantMessage(data.message);
+    }
 
-    if (hasComplete && !window.halted && !window.blockParentReport) {
+    if (data.safety) { handleSafety(data.safety); reEnableInput(); return; }
+
+    if (data.complete && !window.halted && !window.blockParentReport) {
       if (skills) handleSkillsComplete(); else handleComplete();
       return;
     }
@@ -262,8 +240,7 @@ async function getAssistantTurn() {
     reEnableInput();
   } catch (error) {
     thinking.remove();
-    if (cleanUserText !== null) hist[lastIdx] = { role: 'user', content: cleanUserText };
-    addMessage('Hit a small snag. Type your last message again and we’ll pick right back up.', 'system');
+    addMessage('Hit a small snag. Tap send again and we’ll pick right back up.', 'system');
     console.error('Turn error:', error);
     reEnableInput();
   }
@@ -296,11 +273,13 @@ function handleSafety(flag) {
     window.blockParentReport = true;
     disableInputPermanently('Paused. The most important thing right now is talking to someone who can help — the options above are there for you.');
   } else if (flag === 'ABUSE') {
-    // Never let an unsafe disclosure flow toward the parent. The session can
-    // continue conversationally, but it will never produce a parent report.
+    // The server has closed this session — it will never produce a parent report,
+    // and further turns are refused. Surface resources and stop here.
+    window.halted = true;
     window.blockParentReport = true;
+    disableInputPermanently('This is a good place to pause. The people and numbers above can actually help with what you’re carrying.');
   }
-  // SUPPORT: resources shown, interview may continue.
+  // SUPPORT: resources shown, interview continues.
 }
 
 function reportSafetyEvent(flag) {
@@ -325,20 +304,19 @@ function handleComplete() {
   const sendBtn = document.getElementById('sendButton');
   if (sendBtn) sendBtn.disabled = true;
   if (input) input.disabled = true;
-  saveSession();
   runScoring();
 }
 
 async function runScoring() {
   const status = addStatus('Putting your result together — about 30 seconds. Your answers are saved, so you won’t lose anything.');
-  const transcript = buildTranscript();
   try {
-    // Scoring runs SERVER-side now (Prompt B): the server validates, retries,
-    // handles its own safety pass, and STORES the authentic report draft. We just
-    // render what comes back. The teen result never contains the parent's email.
+    // Scoring runs SERVER-side (Prompt B) from the server's OWN stored transcript
+    // — we send no transcript. The server validates, retries, handles its safety
+    // pass, and STORES the authentic report draft. The result never contains the
+    // parent's email.
     const r = await fetch('/api/score', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript })
+      body: JSON.stringify({})
     });
     const data = await r.json();
     status.remove();
@@ -529,7 +507,6 @@ function renderResult(parsed) {
 function startSkills() {
   window.mode = 'skills';
   skillsHistory.length = 0;
-  skillsHistory.push({ role: 'user', content: SEED_MARKER });
   const messages = document.getElementById('messages');
   while (messages.firstChild) messages.removeChild(messages.firstChild);
   const bar = document.getElementById('inputBar');
@@ -537,7 +514,8 @@ function startSkills() {
   const h = document.getElementById('chatHeading');
   if (h) h.textContent = window.session.teen_first_name + ' — quick scenarios';
   showScreen('chat');
-  getAssistantTurn();
+  // Server seeds the first scenario on the answer-less turn.
+  requestTurn();
 }
 
 function handleSkillsComplete() {
@@ -551,16 +529,12 @@ function handleSkillsComplete() {
 
 async function scoreSkills() {
   const status = addStatus('Folding your scenarios into your result — a few seconds.');
-  const transcript = skillsHistory
-    .filter(t => t.content !== SEED_MARKER)
-    .map(t => (t.role === 'user' ? 'PERSON' : 'GUIDE') + ':\n' + t.content)
-    .join('\n\n———\n\n');
   try {
-    // Skills scoring (Prompt D) also runs server-side and adds the money-judgment
-    // line to the STORED report draft.
+    // Skills scoring (Prompt D) runs server-side from the stored skills transcript
+    // and adds the money-judgment line to the STORED report draft.
     const r = await fetch('/api/skills-score', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript })
+      body: JSON.stringify({})
     });
     const data = await r.json();
     status.remove();
@@ -1094,6 +1068,8 @@ function loadSession() {
 function clearSession() {
   try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
   try { localStorage.removeItem(SESSION_KEY); } catch (e) {} // purge any legacy localStorage copy
+  conversationHistory.length = 0;
+  skillsHistory.length = 0;
 }
 
 // ─── RENDERING (safe: never innerHTML on model/user text) ────────────────
@@ -1210,9 +1186,12 @@ function skipQuestion() {
 
 // End & clear this device — purges the transcript and leaves. Important when the
 // app is on a shared or parent's device.
-function endAndClear() {
+async function endAndClear() {
   if (!confirm('End now and clear this from this device? Your answers won’t be saved or sent.')) return;
   clearSession();
+  // Clear the HttpOnly cookie + purge the server-side transcript (JS can't touch
+  // the cookie itself, so the server does it).
+  try { await fetch('/api/session/end', { method: 'POST' }); } catch (e) {}
   location.replace('/register.html');
 }
 

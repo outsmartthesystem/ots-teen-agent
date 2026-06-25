@@ -793,53 +793,21 @@ const ALLOWED_MODELS = new Set([
   'claude-haiku-4-5-20251001'
 ]);
 
-app.post('/api/chat', async (req, res) => {
-  // Cookie-gate FIRST: only a real, unblocked session can use the proxy, and an
-  // unauthenticated caller learns nothing about config. (Closes most of the
-  // open-AI-proxy hole; the prompt is still client-supplied until Phase 4.)
-  const session = await currentSession(req);
-  if (!session) return res.status(401).json({ error: 'no active session' });
-  if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return res.status(500).json({ error: 'Server not configured: ANTHROPIC_API_KEY missing' });
+// The generic /api/chat proxy is GONE (Phase 4). The interview, skills, and
+// scoring all run through server-orchestrated endpoints that own the prompt and
+// the transcript — there is no longer any path that forwards a client-supplied
+// prompt to the model. (Closes the open-AI-proxy P0.)
+
+// ─── END & CLEAR THIS DEVICE ────────────────────────────────────────────────
+// Clears the HttpOnly cookie (JS can't) and purges the in-progress transcript,
+// honoring "your answers won't be saved." Always 200.
+app.post('/api/session/end', async (req, res) => {
+  const s = await currentSession(req);
+  if (s && !s.interview_complete) {
+    try { await db.updateSession(s.id, { turns: { interview: [], skills: [] } }); } catch (e) {}
   }
-  try {
-    const body = {
-      model: ALLOWED_MODELS.has(req.body.model) ? req.body.model : 'claude-sonnet-4-6',
-      max_tokens: Math.min(Number(req.body.max_tokens) || 1200, 8000),
-      system: req.body.system,
-      messages: req.body.messages
-    };
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify(body)
-    });
-    const data = await response.json();
-    console.log('Model:', body.model, '| Status:', response.status);
-    if (!response.ok) return res.status(response.status).json(data);
-
-    // Server-side safety detection (tamper-resistant), attributed to the cookie
-    // session. Persist the durable block + alert; don't delay the teen's turn.
-    try {
-      const text = (data.content && data.content[0] && data.content[0].text) || '';
-      const m = text.match(/\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/);
-      if (m) {
-        if (SAFETY_BLOCK_FLAGS.has(m[1])) db.updateSession(session.id, { safety_blocked: true, safety_flag: m[1] }).catch(() => {});
-        fireSafetyAlert(m[1], { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
-      }
-    } catch (e) { console.error('safety scan error:', e.message); }
-
-    res.json(data);
-  } catch (err) {
-    console.error('Chat error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  clearSessionCookie(res);
+  res.json({ ok: true });
 });
 
 // ─── HEALTH ────────────────────────────────────────────────────────────────
@@ -859,6 +827,13 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
 });
 
+// Prompts live server-side only (Phase 4): the server reads them from disk, but
+// they are not served over HTTP. Block before the static handler.
+app.use((req, res, next) => {
+  const p = (req.path || '').toLowerCase();
+  if (p === '/prompts.js' || p.startsWith('/prompts/')) return res.status(404).end();
+  next();
+});
 app.use(express.static(path.join(__dirname)));
 
 // ─── START SERVER ──────────────────────────────────────────────────────────
