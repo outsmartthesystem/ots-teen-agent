@@ -19,6 +19,7 @@
 const MODEL_INTERVIEW = 'claude-sonnet-4-6';
 const MODEL_SCORING   = 'claude-opus-4-8';      // scoring is one careful call; use the stronger model
 const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
+const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';      // ends the optional scenario check
 const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/;
 const TOTAL_QUESTIONS = 16;
 const SESSION_KEY = 'ots_teen_session_v1';
@@ -26,14 +27,20 @@ const SESSION_MAX_AGE_HOURS = 24;
 const SEED_MARKER = '__SEED_BEGIN__';           // hidden first user turn that triggers the opening frame
 
 // ─── STATE ───────────────────────────────────────────────────────────────
-const conversationHistory = []; // [{ role: 'user'|'assistant', content }]
+const conversationHistory = []; // interview turns [{ role, content }]
+const skillsHistory = [];       // optional scenario-check turns [{ role, content }]
+window.mode = 'interview';      // 'interview' | 'skills' — which loop is running
 window.session = null;          // { teen_first_name, teen_age, teen_age_plus_3, parent_first_name }
 window.rawToken = null;
 window.safetyEvent = null;      // null | 'CRISIS' | 'ABUSE' | 'SUPPORT'
 window.halted = false;          // hard stop (CRISIS): no more turns, no scoring
 window.blockParentReport = false; // CRISIS or ABUSE: this session never produces a parent report
 window.interviewComplete = false;
+window.skillsComplete = false;
 window.scoringResult = null;
+window.moneyJudgment = null;    // money_judgment from Prompt D, once the skills check runs
+
+function activeHistory() { return window.mode === 'skills' ? skillsHistory : conversationHistory; }
 
 // ─── BOOT ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', boot);
@@ -78,6 +85,13 @@ function buildInterviewSystemPrompt() {
     .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
     .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
     .split('{{TEEN_AGE_PLUS_3}}').join(String(s.teen_age_plus_3))
+    .split('{{TEEN_AGE}}').join(String(s.teen_age));
+}
+
+function buildSkillsSystemPrompt() {
+  const s = window.session;
+  return window.PROMPT_C
+    .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
     .split('{{TEEN_AGE}}').join(String(s.teen_age));
 }
 
@@ -136,7 +150,7 @@ function sendMessage() {
   addMessage(text, 'user');
   input.value = '';
   autoResize(input);
-  conversationHistory.push({ role: 'user', content: text });
+  activeHistory().push({ role: 'user', content: text });
   getAssistantTurn();
 }
 
@@ -148,24 +162,28 @@ async function getAssistantTurn() {
   if (input) input.disabled = true;
 
   const thinking = addThinking();
+  const skills = window.mode === 'skills';
+  const hist = activeHistory();
 
-  // Anchor the model to the numbered question without leaking scoring intent.
-  // Inject a neutral progress note into the last real user turn (not the seed),
-  // then restore the clean text after a successful response.
-  const lastIdx = conversationHistory.length - 1;
-  const lastTurn = conversationHistory[lastIdx];
+  // Anchor the model to the numbered question (interview only) without leaking
+  // scoring intent. Inject a neutral progress note into the last real user turn,
+  // then restore the clean text after a successful response. Skills mode (Prompt
+  // C) is self-paced over five ordered scenarios and needs no anchor.
+  const lastIdx = hist.length - 1;
+  const lastTurn = hist[lastIdx];
   const isSeed = lastTurn && lastTurn.content === SEED_MARKER;
   let cleanUserText = null;
-  if (lastTurn && lastTurn.role === 'user' && !isSeed && !window.interviewComplete) {
+  if (!skills && lastTurn && lastTurn.role === 'user' && !isSeed && !window.interviewComplete) {
     cleanUserText = lastTurn.content;
     const q = estimateQuestion();
-    conversationHistory[lastIdx] = {
+    hist[lastIdx] = {
       role: 'user',
       content: `[Internal note for the interviewer: you're around Q${q} of ${TOTAL_QUESTIONS}. Acknowledge this answer neutrally in 1–2 sentences, then ask the next single question in order. Honor skips. Do not score, rate, or praise. Watch for safety.]\n\n${cleanUserText}`
     };
   }
 
-  const system = buildInterviewSystemPrompt();
+  const system = skills ? buildSkillsSystemPrompt() : buildInterviewSystemPrompt();
+  const endSentinel = skills ? SKILLS_SENTINEL : COMPLETE_SENTINEL;
 
   try {
     let data = null, attempts = 0;
@@ -197,41 +215,39 @@ async function getAssistantTurn() {
       throw new Error('Bad response: ' + JSON.stringify(data).slice(0, 300));
     }
 
-    // Restore the clean user text now that the call succeeded.
-    if (cleanUserText !== null) {
-      conversationHistory[lastIdx] = { role: 'user', content: cleanUserText };
-    }
+    if (cleanUserText !== null) hist[lastIdx] = { role: 'user', content: cleanUserText };
 
     const raw = data.content[0].text;
     thinking.remove();
 
     // SAFETY FIRST — a safety sentinel overrides completion in every case.
     const safety = raw.match(SAFETY_SENTINEL_RE);
-    const hasComplete = raw.includes(COMPLETE_SENTINEL);
+    const hasComplete = raw.includes(endSentinel);
 
-    let displayText = raw.replace(SAFETY_SENTINEL_RE, '').split(COMPLETE_SENTINEL).join('').trim();
+    const displayText = raw.replace(SAFETY_SENTINEL_RE, '')
+      .split(COMPLETE_SENTINEL).join('').split(SKILLS_SENTINEL).join('').trim();
 
-    conversationHistory.push({ role: 'assistant', content: displayText });
+    hist.push({ role: 'assistant', content: displayText });
     renderAssistantMessage(displayText);
 
     if (safety) {
       handleSafety(safety[1]);
-      saveSession();
+      if (!skills) saveSession();
       reEnableInput();
       return;
     }
 
-    saveSession();
+    if (!skills) saveSession();
 
     if (hasComplete && !window.halted && !window.blockParentReport) {
-      handleComplete();
+      if (skills) handleSkillsComplete(); else handleComplete();
       return;
     }
 
     reEnableInput();
   } catch (error) {
     thinking.remove();
-    if (cleanUserText !== null) conversationHistory[lastIdx] = { role: 'user', content: cleanUserText };
+    if (cleanUserText !== null) hist[lastIdx] = { role: 'user', content: cleanUserText };
     addMessage('Hit a small snag. Type your last message again and we’ll pick right back up.', 'system');
     console.error('Turn error:', error);
     reEnableInput();
@@ -396,6 +412,11 @@ function renderResult(parsed) {
     root.appendChild(buildGapSection(t));
   }
 
+  // Money judgment (from the optional scenario check), if completed.
+  if (window.moneyJudgment) {
+    root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
+  }
+
   // Strength + verbatim evidence quote.
   const strength = t.demonstrated_strength;
   if (strength && strength.text) {
@@ -420,6 +441,17 @@ function renderResult(parsed) {
     const sec = section('This week', 'move');
     sec.appendChild(para(t.seven_day_move));
     root.appendChild(sec);
+  }
+
+  // Optional skills check — offered once, when not yet done and not safety-blocked.
+  if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
+    const card = elem('div', 'skills-optin');
+    card.appendChild(elem('div', 'skills-optin-title', 'Want a sharper read?'));
+    card.appendChild(elem('p', 'skills-optin-text', 'Answer four quick real-life money scenarios — about three minutes — and I’ll fold a money-judgment read into your result.'));
+    const sBtn = elem('button', 'btn btn-primary skills-optin-btn', 'Sharpen my read →');
+    sBtn.addEventListener('click', startSkills);
+    card.appendChild(sBtn);
+    root.appendChild(card);
   }
 
   // High-scorer pathway (only present for Building / Outsmarting).
@@ -454,6 +486,109 @@ function renderResult(parsed) {
   }
 
   scrollResultTop();
+}
+
+// ─── SKILLS CHECK (optional scenario layer) ──────────────────────────────
+// Reuses the chat UI in 'skills' mode: Prompt C runs five scenarios, then
+// [SKILLS_COMPLETE] → Prompt D scores a "Money Judgment" read that's shown as a
+// distinct section (not folded into the readiness total) and offered to the
+// parent report as a vetoable line.
+function startSkills() {
+  window.mode = 'skills';
+  skillsHistory.length = 0;
+  skillsHistory.push({ role: 'user', content: SEED_MARKER });
+  const messages = document.getElementById('messages');
+  while (messages.firstChild) messages.removeChild(messages.firstChild);
+  const bar = document.getElementById('inputBar');
+  if (bar) bar.style.display = '';
+  const h = document.getElementById('chatHeading');
+  if (h) h.textContent = window.session.teen_first_name + ' — quick scenarios';
+  showScreen('chat');
+  getAssistantTurn();
+}
+
+function handleSkillsComplete() {
+  window.skillsComplete = true;
+  const input = document.getElementById('userInput');
+  const sendBtn = document.getElementById('sendButton');
+  if (sendBtn) sendBtn.disabled = true;
+  if (input) input.disabled = true;
+  scoreSkills();
+}
+
+async function scoreSkills() {
+  const status = addStatus('Folding your scenarios into your result — a few seconds.');
+  const transcript = skillsHistory
+    .filter(t => t.content !== SEED_MARKER)
+    .map(t => (t.role === 'user' ? 'PERSON' : 'GUIDE') + ':\n' + t.content)
+    .join('\n\n———\n\n');
+  const system = window.PROMPT_D.split('{{TEEN_AGE}}').join(String(window.session.teen_age));
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: MODEL_SCORING, max_tokens: 2000, system, messages: [{ role: 'user', content: transcript }] })
+    });
+    const data = await r.json();
+    if (!data || !data.content || !data.content[0]) throw new Error('bad skills response');
+    const parsed = parseScoringJSON(data.content[0].text);
+    status.remove();
+    window.mode = 'interview';
+    if (!parsed) throw new Error('could not parse skills JSON');
+    if (parsed.safety_check && parsed.safety_check.clear === false) {
+      window.blockParentReport = true;
+      showResources(parsed.safety_check.flag || 'SUPPORT');
+      renderResult(window.scoringResult);
+      return;
+    }
+    window.moneyJudgment = parsed.money_judgment || null;
+    mergeMoneyJudgmentIntoReport();
+    renderResult(window.scoringResult);
+    console.log('MONEY JUDGMENT:', window.moneyJudgment);
+  } catch (e) {
+    status.remove();
+    window.mode = 'interview';
+    console.error('Skills scoring error:', e);
+    renderResult(window.scoringResult);
+    addStatus('Couldn’t fold in the scenarios just now, but your main result is here.');
+  }
+}
+
+// Offer the money-judgment line to the parent report as a vetoable shareable item.
+function mergeMoneyJudgmentIntoReport() {
+  const mj = window.moneyJudgment;
+  if (!mj || mj.score == null) return;
+  const draft = window.scoringResult && window.scoringResult.parent_report_draft;
+  if (!draft) return;
+  if (!Array.isArray(draft.shareable_items)) draft.shareable_items = [];
+  if (draft.shareable_items.some(i => i.id === 'mj1')) return;
+  draft.shareable_items.push({
+    id: 'mj1', category: 'money_judgment',
+    text: mj.parent_line || mj.teen_summary || '', evidence_quote: null
+  });
+}
+
+function buildMoneyJudgmentSection(mj) {
+  const wrap = elem('div', 'mj-section');
+  wrap.appendChild(elem('div', 'mj-title', 'Money judgment — from your scenarios'));
+  if (mj.score != null) {
+    const row = elem('div', 'bar-row');
+    row.appendChild(elem('div', 'bar-label', 'Judgment'));
+    const track = elem('div', 'bar-track');
+    const fill = elem('div', 'bar-fill');
+    fill.style.width = (clamp(mj.score, 0, 5) / 5 * 100) + '%';
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(elem('div', 'bar-score', String(mj.score)));
+    wrap.appendChild(row);
+  } else {
+    wrap.appendChild(elem('p', 'confidence-note', 'Not enough in the scenarios to read this one yet.'));
+  }
+  if (mj.teen_summary) {
+    const p = elem('p', 'mj-summary');
+    appendTextWithLineBreaks(p, mj.teen_summary);
+    wrap.appendChild(p);
+  }
+  return wrap;
 }
 
 // ─── PREVIEW / VETO (step 4) ─────────────────────────────────────────────
@@ -557,7 +692,8 @@ function categoryLabel(cat) {
     what_matters: 'What matters to you',
     strength: 'A strength you showed',
     growth_area: 'A growth area',
-    environmental: 'Context worth knowing'
+    environmental: 'Context worth knowing',
+    money_judgment: 'Your money judgment'
   })[cat] || 'Shared';
 }
 
@@ -789,7 +925,7 @@ function stripInternalNote(content) {
 }
 
 function getApiMessages() {
-  return conversationHistory.map(t => ({ role: t.role, content: t.content }));
+  return activeHistory().map(t => ({ role: t.role, content: t.content }));
 }
 
 function estimateQuestion() {

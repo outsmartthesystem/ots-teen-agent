@@ -185,7 +185,8 @@ const REPORT_CATEGORY_LABEL = {
   what_matters: 'What matters to them',
   strength: 'A strength',
   growth_area: 'A growth area',
-  environmental: 'Context worth knowing'
+  environmental: 'Context worth knowing',
+  money_judgment: 'Money judgment'
 };
 function buildParentEmail(report, teenName, parentName) {
   const items = Array.isArray(report.shareable_items) ? report.shareable_items : [];
