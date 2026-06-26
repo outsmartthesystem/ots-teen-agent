@@ -475,25 +475,14 @@ function renderResult(parsed) {
   // 6) Money decisions (from the optional scenario check), if completed.
   if (window.moneyJudgment) root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
 
-  // 7) Optional skills check — offered once.
-  if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
-    const card = elem('div', 'skills-optin');
-    card.appendChild(elem('div', 'skills-optin-title', 'Want a sharper read?'));
-    card.appendChild(elem('p', 'skills-optin-text', 'Answer five quick real-life money scenarios — about three minutes — and I’ll fold a money-decision read into your result.'));
-    const sBtn = elem('button', 'btn btn-primary skills-optin-btn', 'Sharpen my read →');
-    sBtn.addEventListener('click', startSkills);
-    card.appendChild(sBtn);
-    root.appendChild(card);
-  }
-
-  // 8) High-scorer pathway.
+  // 7) High-scorer pathway.
   if (t.high_scorer_pathway) {
     const sec = section('Where this can go', 'pathway');
     sec.appendChild(para(t.high_scorer_pathway));
     root.appendChild(sec);
   }
 
-  // 9) Two ways forward — both are real, clickable controls.
+  // 8) Two ways forward — both are real, clickable controls.
   if (t.choice && (t.choice.solo || t.choice.ots)) {
     root.appendChild(elem('h3', 'choice-title', 'Two ways to go from here'));
     const wrap = elem('div', 'choice');
@@ -512,26 +501,54 @@ function renderResult(parsed) {
     root.appendChild(panel);
   }
 
-  // 9b) Accuracy check — "Does this feel true?" The teen can confirm or correct
-  //     the read before anything is shared; a correction re-reads the result.
+  // 9) Accuracy check — "Does this feel true?" before anything is shared.
   root.appendChild(buildAccuracyCheck());
 
-  // 10) Save-as-PDF keepsake.
-  const pdfBtn = elem('button', 'btn btn-ghost result-pdf', '⤓  Save my result as a PDF');
-  pdfBtn.addEventListener('click', downloadResultPDF);
-  root.appendChild(pdfBtn);
-
-  // 11) Sharing CTA.
-  const parent = window.session.parent_first_name;
-  if (window.blockParentReport) {
-    root.appendChild(elem('div', 'next-note', 'Nothing from this goes to ' + parent + '. This result is just for you.'));
-  } else {
-    const cta = elem('button', 'btn btn-primary result-cta', 'Next: choose what ' + parent + ' sees →');
-    cta.addEventListener('click', showPreview);
-    root.appendChild(cta);
-  }
+  // 10) Guided "What's next": the optional scenarios, save-as-PDF, and the share
+  //     step (the PRIMARY action) — each clearly labeled so nothing gets missed.
+  root.appendChild(buildNextSteps());
 
   scrollResultTop();
+}
+
+// A clear, guided end-of-result block. Avi's run-through showed teens miss the
+// share button, skip the PDF, and won't find the scenarios — so they're now
+// explicit, labeled steps, with the share as the obvious primary action.
+function buildNextSteps() {
+  const parent = window.session.parent_first_name;
+  const box = elem('div', 'next-steps');
+  box.appendChild(elem('div', 'ns-title', 'What’s next'));
+
+  if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
+    const step = elem('div', 'ns-step');
+    step.appendChild(elem('div', 'ns-step-h', 'Put it to the test  ·  optional, ~3 min'));
+    step.appendChild(elem('div', 'ns-step-p', 'Five quick real-life money calls. They add a “money decision skills” read to your result — most people find this the most interesting part.'));
+    const b = elem('button', 'btn btn-primary ns-btn', 'Try the 5 scenarios →');
+    b.addEventListener('click', startSkills);
+    step.appendChild(b);
+    box.appendChild(step);
+  }
+
+  const pdfStep = elem('div', 'ns-step');
+  pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
+  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it as a PDF so you don’t lose it.'));
+  const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
+  pdfBtn.addEventListener('click', downloadResultPDF);
+  pdfStep.appendChild(pdfBtn);
+  box.appendChild(pdfStep);
+
+  if (window.blockParentReport) {
+    box.appendChild(elem('div', 'next-note', 'Nothing from this goes to ' + parent + '. This result is just for you.'));
+  } else {
+    const shareStep = elem('div', 'ns-step ns-primary');
+    shareStep.appendChild(elem('div', 'ns-step-h', 'Share with ' + parent + '  ·  your call'));
+    shareStep.appendChild(elem('div', 'ns-step-p', 'This is the only thing ' + parent + ' sees — and you choose every single line before it sends. You can also send nothing.'));
+    const cta = elem('button', 'btn btn-primary result-cta ns-btn-lg', 'Choose what ' + parent + ' sees →');
+    cta.addEventListener('click', showPreview);
+    shareStep.appendChild(cta);
+    box.appendChild(shareStep);
+  }
+  return box;
 }
 
 // ─── YOUR SYSTEM MAP (branded result heart) ──────────────────────────────
@@ -1121,7 +1138,7 @@ function buildResultPdfDoc() {
   const t = (window.scoringResult && window.scoringResult.teen_output) || {};
   const jsPDF = window.jspdf.jsPDF;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const L = 18, R = 192, W = R - L, PT = 0.3528, BOTTOM = 274;
+  const L = 18, R = 192, W = R - L, PT = 0.3528, BOTTOM = 281;
   let y = 22;
 
   function ensureSpace(needed) { if (y + (needed || 12) > BOTTOM) { doc.addPage(); y = 22; } }
@@ -1134,7 +1151,7 @@ function buildResultPdfDoc() {
     const c = o.color || [26, 26, 26];
     doc.setTextColor(c[0], c[1], c[2]);
     const lines = doc.splitTextToSize(String(str), width);
-    const h = lines.length * size * PT * 1.2;
+    const h = lines.length * size * PT * 1.16;
     ensureSpace(h + (o.after == null ? 4 : o.after));
     doc.text(lines, o.x || L, y);
     y += h + (o.after == null ? 4 : o.after);
@@ -1142,11 +1159,11 @@ function buildResultPdfDoc() {
   // One System Map station: a dot marker + label + text (no raw numbers).
   function station(label, text, accent) {
     if (!text) return;
-    ensureSpace(16);
+    ensureSpace(15);
     doc.setDrawColor(accent[0], accent[1], accent[2]); doc.setLineWidth(0.5);
     doc.setFillColor(255, 255, 255); doc.circle(L + 2, y - 1.2, 1.9, 'FD');
     block(label, { size: 8.5, bold: true, color: [138, 147, 166], x: L + 8, width: W - 8, after: 1.5 });
-    block(text, { size: 11, x: L + 8, width: W - 8, after: 6 });
+    block(text, { size: 11, x: L + 8, width: W - 8, after: 5 });
   }
 
   // Branded header with a small drawn compass.
@@ -1412,9 +1429,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const endBtn = document.getElementById('endBtn');
   if (endBtn) endBtn.addEventListener('click', endAndClear);
   if (input) {
-    input.addEventListener('input', () => autoResize(input));
+    input.addEventListener('input', () => { autoResize(input); scrollToBottom(); });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
     });
+    // When the input is focused (keyboard opening), keep the input + the latest
+    // messages in view above the keyboard.
+    input.addEventListener('focus', () => setTimeout(() => { syncChatViewport(); scrollToBottom(); }, 250));
   }
+  syncChatViewport();
 });
+
+// Pin the chat to the VISUAL viewport so the on-screen keyboard never covers the
+// input or what's being typed (the core mobile fix). No-op on desktop.
+function syncChatViewport() {
+  const el = document.getElementById('screen-chat');
+  if (!el) return;
+  const vv = window.visualViewport;
+  el.style.height = (vv ? vv.height : window.innerHeight) + 'px';
+  el.style.transform = 'translateY(' + (vv ? vv.offsetTop : 0) + 'px)';
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', syncChatViewport);
+  window.visualViewport.addEventListener('scroll', syncChatViewport);
+}
+window.addEventListener('orientationchange', () => setTimeout(syncChatViewport, 250));

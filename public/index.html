@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
   <meta name="robots" content="noindex">
   <title>Outsmart the System — Teen Check</title>
   <style>
@@ -34,7 +34,9 @@
     .btn-row { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
 
     /* Chat layout */
-    #screen-chat { padding: 0; align-items: stretch; }
+    /* Pinned to the VISUAL viewport so the on-screen keyboard never covers the
+       input or what you're typing (JS sets height/top from visualViewport). */
+    #screen-chat { position: fixed; left: 0; right: 0; top: 0; height: 100dvh; padding: 0; align-items: stretch; z-index: 5; }
     .chat-wrap { width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
     .chat-header { padding: 13px 20px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 9px; }
     .chat-header-top { display: flex; align-items: center; gap: 10px; }
@@ -77,7 +79,7 @@
     .ctrl-end { color: #c98; border-color: transparent; }
     .ctrl-end:hover { color: var(--danger); border-color: #5a2730; }
     .input-bar { border-top: 1px solid var(--line); padding: 14px 16px; display: flex; gap: 10px; align-items: flex-end; }
-    #userInput { flex: 1; resize: none; min-height: 44px; max-height: 140px; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 15px; font-family: inherit; }
+    #userInput { flex: 1; resize: none; min-height: 46px; max-height: 140px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 16px; line-height: 1.4; font-family: inherit; }
     #userInput:focus { outline: none; border-color: var(--accent); }
     #sendButton { background: var(--accent); color: #fff; border: none; border-radius: 12px; padding: 0 18px; height: 44px; font-weight: 600; cursor: pointer; }
     #sendButton:disabled { opacity: .5; cursor: default; }
@@ -118,6 +120,15 @@
     .ac-input { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; color: var(--text); font-family: inherit; font-size: 14px; padding: 9px 11px; resize: vertical; box-sizing: border-box; }
     .ac-refine { margin-top: 10px; }
     .ac-err { margin-top: 8px; font-size: 13px; color: var(--danger); }
+    /* Guided "What's next" — clear steps so the share/PDF/scenarios aren't missed */
+    .next-steps { margin: 26px 0 8px; padding-top: 18px; border-top: 1px solid var(--line); }
+    .ns-title { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 12px; }
+    .ns-step { padding: 14px 16px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 12px; }
+    .ns-step-h { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+    .ns-step-p { font-size: 13.5px; color: var(--muted); margin-bottom: 12px; line-height: 1.45; }
+    .ns-btn { width: 100%; }
+    .ns-primary { background: #0e1830; border-color: var(--accent); }
+    .ns-btn-lg { width: 100%; font-size: 16px; padding: 14px; }
     .confidence-note { font-size: 13px; color: var(--muted); margin: 0 0 22px; }
     .gap-section { margin: 0 0 24px; padding: 16px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
     .gap-title { font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--accent-2); margin-bottom: 12px; }
