@@ -195,25 +195,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── STATIC FILE SECURITY ──────────────────────────────────────────────────
-// express.static(__dirname) serves the whole repo, so explicitly block backend
-// source, manifests, secrets, and git internals from public download.
-app.use((req, res, next) => {
-  const p = req.path.toLowerCase();
-  if (
-    p === '/server.js' ||
-    p === '/package.json' ||
-    p === '/package-lock.json' ||
-    p === '/.env' ||
-    p === '/.env.example' ||
-    p === '/render.yaml' ||
-    p.startsWith('/.git') ||
-    p.startsWith('/node_modules')
-  ) {
-    return res.status(404).send('Not found');
-  }
-  next();
-});
 
 // ─── RATE LIMITING ─────────────────────────────────────────────────────────
 // Per-IP limit on the API. An interview averages ~one message/minute, so this
@@ -894,14 +875,10 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
 });
 
-// Prompts live server-side only (Phase 4): the server reads them from disk, but
-// they are not served over HTTP. Block before the static handler.
-app.use((req, res, next) => {
-  const p = (req.path || '').toLowerCase();
-  if (p === '/prompts.js' || p.startsWith('/prompts/')) return res.status(404).end();
-  next();
-});
-app.use(express.static(path.join(__dirname)));
+// Serve ONLY the public asset directory (whitelist, not a blacklist). Backend
+// source, prompts, secrets, and node_modules live OUTSIDE public/, so they can
+// never be requested over HTTP — the server reads prompts.js from disk directly.
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── START SERVER ──────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
