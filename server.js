@@ -98,6 +98,18 @@ function phaseFor(q) {
   return 'Patterns & your move';
 }
 
+// Quick-answer chips: when the model asks one of the list-style questions, offer
+// tappable options (the teen can still type). Keyed off the question wording, so
+// chips only appear when the matching question is actually asked.
+const CHIP_SETS = [
+  { test: /school.*work|work.*school|year off/i, chips: ['In school', 'Working', 'Both', 'Taking time off'] },
+  { test: /curiosity or planning|wanting things|some mix|mostly a mix/i, chips: ['Wanting things', 'Planning ahead', 'Stress about it', 'Just curious', 'A mix'] },
+  { test: /planned and talked about openly|mostly avoided|saved really cautiously|stressful or tense/i, chips: ['Planned & open', 'Mostly avoided', 'Spent freely', 'Saved cautiously', 'Often tense', 'Depends on the adult'] }
+];
+function chipsFor(msg) { const f = CHIP_SETS.find(c => c.test.test(String(msg || ''))); return f ? f.chips : null; }
+// The goal-priority question — the teen's NEXT answer becomes the pinned goal chip.
+const GOAL_Q_RE = /matters most|which one matters|of those three/i;
+
 // Format a stored turn array into the speaker-labelled transcript the scoring
 // prompts expect (identical to the client's previous buildTranscript output).
 function formatTranscript(turns, userLabel, asstLabel) {
@@ -328,6 +340,7 @@ app.post('/api/interview/turn', async (req, res) => {
   const answer = (req.body && typeof req.body.answer === 'string') ? req.body.answer.trim().slice(0, 4000) : '';
   const store = session.turns || {};
   let turns = Array.isArray(store.interview) ? store.interview.slice() : [];
+  const priorQ = (turns.length && turns[turns.length - 1].role === 'assistant') ? turns[turns.length - 1].content : '';
   if (turns.length === 0) {
     turns.push({ role: 'user', content: SEED_MARKER });
   } else {
@@ -354,10 +367,14 @@ app.post('/api/interview/turn', async (req, res) => {
     }
     const complete = raw.includes(COMPLETE_SENTINEL);
     turns.push({ role: 'assistant', content: clean });
-    await db.updateSession(session.id, Object.assign({ turns: Object.assign({}, store, { interview: turns }) }, complete ? { interview_complete: true } : {}));
+    // Pin a goal chip when the answer just given was to the goal-priority question.
+    const goalChip = (answer && GOAL_Q_RE.test(priorQ)) ? answer.trim().slice(0, 80) : (store.goal_chip || '');
+    const newStore = Object.assign({}, store, { interview: turns });
+    if (goalChip) newStore.goal_chip = goalChip;
+    await db.updateSession(session.id, Object.assign({ turns: newStore }, complete ? { interview_complete: true } : {}));
     // Progress for the header bar: the opening frame isn't a numbered question.
     const q = Math.max(0, turns.filter(t => t.role === 'assistant').length - 1);
-    res.json({ message: clean, complete, progress: { q, total: TOTAL_QUESTIONS, phase: phaseFor(q) } });
+    res.json({ message: clean, complete, progress: { q, total: TOTAL_QUESTIONS, phase: phaseFor(q) }, chips: chipsFor(clean) || undefined, goal: goalChip || undefined });
   } catch (e) {
     console.error('interview turn error:', e.message);
     res.status(502).json({ error: 'interview error' });
@@ -414,7 +431,7 @@ app.get('/api/interview/state', async (req, res) => {
   const turns = (s.turns && Array.isArray(s.turns.interview))
     ? s.turns.interview.filter(t => t.content !== SEED_MARKER)
     : [];
-  res.json({ interview_complete: s.interview_complete, report_sent: s.report_sent, safety_blocked: s.safety_blocked, turns });
+  res.json({ interview_complete: s.interview_complete, report_sent: s.report_sent, safety_blocked: s.safety_blocked, turns, goal: (s.turns && s.turns.goal_chip) || undefined });
 });
 
 // ─── SCORE (Prompt B, server-side) ─────────────────────────────────────────

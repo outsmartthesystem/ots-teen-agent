@@ -44,6 +44,10 @@
     .cp-track { flex: 1; height: 6px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); overflow: hidden; }
     .cp-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 999px; transition: width .45s ease; }
     .cp-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .goal-chip { font-size: 12px; color: var(--accent-2); background: rgba(47,109,240,0.12); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .quick-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 4px 16px 6px; }
+    .quick-chip { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-family: inherit; font-size: 13.5px; padding: 7px 13px; border-radius: 999px; cursor: pointer; }
+    .quick-chip:hover { border-color: var(--accent); color: var(--accent-2); }
     .messages-area { flex: 1; overflow-y: auto; padding: 20px; }
     #messages { display: flex; flex-direction: column; gap: 14px; }
     .message { max-width: 86%; padding: 12px 15px; border-radius: 14px; white-space: normal; animation: fadeUp .35s ease forwards; opacity: 0; }
@@ -259,10 +263,12 @@
           <div class="cp-track"><div class="cp-fill" id="cpFill"></div></div>
           <div class="cp-label" id="cpLabel"></div>
         </div>
+        <div class="goal-chip" id="goalChip" style="display:none"></div>
       </div>
       <div class="messages-area" id="messagesArea">
         <div id="messages" aria-live="polite" aria-atomic="false" role="log"></div>
       </div>
+      <div class="quick-chips" id="quickChips"></div>
       <div class="input-controls">
         <button class="ctrl-btn" id="skipBtn" type="button">Skip this one</button>
         <button class="ctrl-btn ctrl-end" id="endBtn" type="button">End &amp; clear this device</button>

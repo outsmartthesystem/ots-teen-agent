@@ -93,7 +93,7 @@ async function boot() {
       const r = await fetch('/api/interview/state');
       if (r.ok) {
         const st = await r.json();
-        if (st.turns && st.turns.length) return resumeFromServer(st.turns);
+        if (st.turns && st.turns.length) { resumeFromServer(st.turns); if (st.goal) setGoalChip(st.goal); return; }
       }
     } catch (e) { /* fall through to a fresh start */ }
   }
@@ -188,6 +188,7 @@ function sendMessage() {
   const text = input.value.trim();
   if (!text || sendBtn.disabled) return;
 
+  clearChips();
   addMessage(text, 'user');
   input.value = '';
   autoResize(input);
@@ -232,6 +233,8 @@ async function requestTurn(answer) {
       renderAssistantMessage(data.message);
     }
     if (data.progress) updateProgress(data.progress);
+    if (data.goal) setGoalChip(data.goal);
+    renderChips(data.chips);
 
     if (data.safety) { handleSafety(data.safety); reEnableInput(); return; }
 
@@ -272,6 +275,32 @@ function updateProgress(p) {
     ? (p.phase || 'Scenarios') + ' · ' + q + ' of ' + total
     : (p.phase ? p.phase + ' · ' : '') + 'Q' + q + ' of ~' + total;
   wrap.style.display = 'flex';
+}
+
+// ─── QUICK-ANSWER CHIPS + GOAL CHIP ──────────────────────────────────────
+// Server-supplied tappable options for list-style questions (the teen can still
+// type). Tapping fills + sends. A pinned goal chip appears once the teen names
+// their main goal, so every later question visibly relates to it.
+function renderChips(chips) {
+  const box = document.getElementById('quickChips');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!chips || !chips.length || window.mode === 'skills') return;
+  chips.forEach(label => {
+    const b = elem('button', 'quick-chip', label);
+    b.addEventListener('click', () => {
+      const input = document.getElementById('userInput');
+      if (input && !input.disabled) { input.value = label; sendMessage(); }
+    });
+    box.appendChild(b);
+  });
+}
+function clearChips() { const box = document.getElementById('quickChips'); if (box) box.innerHTML = ''; }
+function setGoalChip(goal) {
+  const el = document.getElementById('goalChip');
+  if (!el || !goal) return;
+  el.textContent = 'Your goal: ' + goal;
+  el.style.display = '';
 }
 
 // ─── SAFETY HANDLING ─────────────────────────────────────────────────────
