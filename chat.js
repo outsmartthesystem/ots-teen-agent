@@ -1037,65 +1037,93 @@ function buildResultPdfDoc() {
   const t = (window.scoringResult && window.scoringResult.teen_output) || {};
   const jsPDF = window.jspdf.jsPDF;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const L = 18, R = 192, W = R - L, PT = 0.3528;
-  let y = 24;
+  const L = 18, R = 192, W = R - L, PT = 0.3528, BOTTOM = 274;
+  let y = 22;
 
+  function ensureSpace(needed) { if (y + (needed || 12) > BOTTOM) { doc.addPage(); y = 22; } }
   function block(str, o) {
     o = o || {};
     const size = o.size || 11;
+    const width = o.width || W;
     doc.setFont('helvetica', o.bold ? 'bold' : (o.italic ? 'italic' : 'normal'));
     doc.setFontSize(size);
     const c = o.color || [26, 26, 26];
     doc.setTextColor(c[0], c[1], c[2]);
-    const lines = doc.splitTextToSize(String(str), W);
-    doc.text(lines, L, y);
-    y += lines.length * size * PT * 1.2 + (o.after == null ? 4 : o.after);
+    const lines = doc.splitTextToSize(String(str), width);
+    const h = lines.length * size * PT * 1.2;
+    ensureSpace(h + (o.after == null ? 4 : o.after));
+    doc.text(lines, o.x || L, y);
+    y += h + (o.after == null ? 4 : o.after);
+  }
+  // One System Map station: a dot marker + label + text (no raw numbers).
+  function station(label, text, accent) {
+    if (!text) return;
+    ensureSpace(16);
+    doc.setDrawColor(accent[0], accent[1], accent[2]); doc.setLineWidth(0.5);
+    doc.setFillColor(255, 255, 255); doc.circle(L + 2, y - 1.2, 1.9, 'FD');
+    block(label, { size: 8.5, bold: true, color: [138, 147, 166], x: L + 8, width: W - 8, after: 1.5 });
+    block(text, { size: 11, x: L + 8, width: W - 8, after: 6 });
   }
 
-  block('OUTSMART THE SYSTEM  ·  TEEN CHECK', { size: 8, color: [47, 109, 240], after: 2 });
-  block(window.session.teen_first_name, { size: 24, bold: true, after: 2 });
-  if (t.stage_display) block(t.stage_display, { size: 11, bold: true, color: [47, 109, 240], after: 4 });
-  if (t.goal_reflected) block(t.goal_reflected, { size: 12.5, color: [47, 74, 122], after: 7 });
+  // Branded header with a small drawn compass.
+  const cx = L + 5, cy = y + 2;
+  doc.setDrawColor(47, 109, 240); doc.setLineWidth(0.6); doc.circle(cx, cy, 5, 'S');
+  doc.setFillColor(111, 179, 255); doc.triangle(cx, cy - 4.4, cx - 2.2, cy, cx + 2.2, cy, 'F');
+  doc.setFillColor(47, 109, 240); doc.triangle(cx, cy + 4.4, cx - 2.2, cy, cx + 2.2, cy, 'F');
+  doc.setFillColor(255, 255, 255); doc.circle(cx, cy, 0.9, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(47, 109, 240);
+  doc.text('OUTSMART THE SYSTEM', cx + 9, cy - 1.4);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(138, 147, 166);
+  doc.text('Your System Map', cx + 9, cy + 2.6);
+  y = cy + 12;
 
-  (t.bars || []).forEach(function (b) {
-    const rowY = y;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(85, 85, 85);
-    doc.text(String(b.dimension), L, rowY + 1.6);
-    const tx = L + 50, tw = 104, th = 3.4, ty = rowY - 1.2;
-    doc.setFillColor(236, 236, 236); doc.roundedRect(tx, ty, tw, th, 1.7, 1.7, 'F');
-    if (b.score != null) {
-      const w = Math.max(2, clamp(b.score, 0, 5) / 5 * tw);
-      doc.setFillColor(47, 109, 240); doc.roundedRect(tx, ty, w, th, 1.7, 1.7, 'F');
-      doc.setFont('helvetica', 'bold'); doc.setTextColor(26, 26, 26);
-      doc.text(String(b.score), tx + tw + 4, rowY + 1.6);
-    } else {
-      doc.setFontSize(8); doc.setTextColor(170, 170, 170);
-      doc.text('not enough info yet', tx + 3, rowY + 1.3);
-    }
-    y += 7.5;
-  });
-  y += 3;
+  block((window.session.teen_first_name || '') + ' — here’s where you are', { size: 19, bold: true, after: 3 });
+  if (t.stage_display) block('Stage: ' + t.stage_display, { size: 10, bold: true, color: [47, 109, 240], after: 7 });
 
+  // System Map stations — the branded heart, no raw numbers.
+  station('YOUR NORTH STAR', t.goal_reflected, [240, 198, 116]);
   const s = t.demonstrated_strength;
   if (s && s.text) {
-    block('WHAT YOU’VE ALREADY GOT', { size: 9, bold: true, color: [120, 120, 120], after: 2 });
-    block(s.text, { size: 11, after: s.evidence_quote ? 2.5 : 6 });
-    if (s.evidence_quote) block('“' + s.evidence_quote + '”', { size: 10, italic: true, color: [70, 70, 70], after: 6 });
+    station('WHAT’S ALREADY WORKING', s.text, [47, 109, 240]);
+    if (s.evidence_quote) block('“' + s.evidence_quote + '”', { size: 10, italic: true, color: [110, 110, 110], x: L + 8, width: W - 8, after: 6 });
   }
-  const u = t.biggest_unlock;
-  if (u && (u.skill || u.framing)) {
-    block('YOUR BIGGEST UNLOCK' + (u.skill ? ': ' + String(u.skill).toUpperCase() : ''), { size: 9, bold: true, color: [120, 120, 120], after: 2 });
-    if (u.framing) block(u.framing, { size: 11, after: 6 });
-  }
-  if (t.seven_day_move) {
-    block('THIS WEEK', { size: 9, bold: true, color: [83, 150, 110], after: 2 });
-    block(t.seven_day_move, { size: 11, after: 6 });
-  }
+  station('THE SYSTEM YOU’RE RUNNING', t.current_pattern, [47, 109, 240]);
+  const u = t.biggest_unlock || {};
+  if (u.skill) station('THE FRICTION', 'The one skill slowing your momentum right now: ' + u.skill + '.', [240, 140, 90]);
+  if (u.framing) station('THE LEVER', u.framing, [47, 109, 240]);
+  station('YOUR 7-DAY MOVE', t.seven_day_move, [111, 211, 160]);
 
-  doc.setDrawColor(225, 225, 225); doc.line(L, 283, R, 283);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(150, 150, 150);
+  // Where each money skill is starting from — qualitative labels, NEVER numbers.
+  const bars = (t.bars || []).filter(b => b.score != null);
+  if (bars.length) {
+    ensureSpace(8 + bars.length * 7);
+    block('WHERE EACH MONEY SKILL IS STARTING FROM', { size: 8.5, bold: true, color: [138, 147, 166], after: 3 });
+    bars.forEach(function (b) {
+      ensureSpace(8);
+      const rowY = y;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(85, 85, 85);
+      doc.text(String(b.dimension), L, rowY + 1.4);
+      const tx = L + 52, tw = 86, th = 3.2, ty = rowY - 1.2;
+      doc.setFillColor(236, 236, 236); doc.roundedRect(tx, ty, tw, th, 1.6, 1.6, 'F');
+      const w = Math.max(2, clamp(b.score, 0, 5) / 5 * tw);
+      doc.setFillColor(47, 109, 240); doc.roundedRect(tx, ty, w, th, 1.6, 1.6, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(90, 90, 90);
+      doc.text(SCORE_LABELS[b.score] || '', tx + tw + 3, rowY + 1.4);
+      y += 7;
+    });
+    y += 3;
+  }
+  if (t.confidence_note) block(t.confidence_note, { size: 9, italic: true, color: [138, 147, 166], after: 6 });
+
+  // Optional money-decision-skills line (qualitative).
+  const mj = window.moneyJudgment;
+  if (mj && mj.teen_summary) station('MONEY DECISION SKILLS', mj.teen_summary, [47, 109, 240]);
+
+  // Footer on the final page.
+  doc.setDrawColor(225, 225, 225); doc.setLineWidth(0.2); doc.line(L, 286, R, 286);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(150, 150, 150);
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  doc.text('outsmartthesystem.org  ·  ' + date, L, 289);
+  doc.text('Outsmart the System  ·  outsmartthesystem.org  ·  ' + date, L, 291);
   return doc;
 }
 
