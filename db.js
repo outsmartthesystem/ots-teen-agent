@@ -37,10 +37,13 @@ async function init() {
       interview_complete BOOLEAN NOT NULL DEFAULT false,
       report_sent        BOOLEAN NOT NULL DEFAULT false,
       report_draft       JSONB,
-      turns              JSONB
+      turns              JSONB,
+      result             JSONB
     )`);
   // Phase 4: server-held interview/skills transcript. Migration for existing tables.
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS turns JSONB`);
+  // Recovery: the teen-facing result, so a reload can re-render it (nothing lost).
+  await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS result JSONB`);
   initialized = true;
 }
 // Fail-closed readiness: a configured-but-uninitialized Postgres is NOT ready.
@@ -59,7 +62,7 @@ async function createSession(s) {
       parent_first_name: s.parent_first_name, parent_email: s.parent_email,
       created_at: new Date(), expires_at: new Date(s.expires_at),
       safety_blocked: false, safety_flag: null, interview_complete: false,
-      report_sent: false, report_draft: null, turns: null
+      report_sent: false, report_draft: null, turns: null, result: null
     });
   }
 }
@@ -79,8 +82,8 @@ async function getSession(id) {
   return row;
 }
 
-const ALLOWED_UPDATES = new Set(['safety_blocked', 'safety_flag', 'interview_complete', 'report_sent', 'report_draft', 'turns']);
-const JSONB_FIELDS = new Set(['report_draft', 'turns']);
+const ALLOWED_UPDATES = new Set(['safety_blocked', 'safety_flag', 'interview_complete', 'report_sent', 'report_draft', 'turns', 'result']);
+const JSONB_FIELDS = new Set(['report_draft', 'turns', 'result']);
 async function updateSession(id, fields) {
   const keys = Object.keys(fields).filter(k => ALLOWED_UPDATES.has(k));
   if (!keys.length) return;

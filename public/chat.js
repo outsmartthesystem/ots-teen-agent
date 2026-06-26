@@ -79,14 +79,13 @@ async function boot() {
   if (session.safety_blocked) {
     return showError("This check is closed. If you’re carrying something heavy, you can call or text <b>988</b> any time — it’s free and people who can help answer.");
   }
-  if (session.report_sent) {
-    return showError("This check is already done — your result was shared the way you chose. Nice work.");
+  // Recovery: a finished session re-renders its SAVED result so a teen who didn't
+  // save or share isn't stuck on a dead-end "already complete" message.
+  if (session.report_sent || session.interview_complete) {
+    return recoverResult(session);
   }
 
   if (!linkId) {
-    if (session.interview_complete) {
-      return showError("This check is already complete.");
-    }
     // Resume mid-interview from the SERVER-held transcript (the device no longer
     // stores it). If there are turns, rebuild and continue; otherwise start fresh.
     try {
@@ -98,6 +97,29 @@ async function boot() {
     } catch (e) { /* fall through to a fresh start */ }
   }
   showOnboarding();
+}
+
+// Re-render a finished session's saved result on reload (recovery). If shared,
+// it's read-only with a re-save option; if not yet shared, the full result with
+// the "Before you go" choices.
+async function recoverResult(session) {
+  try {
+    const r = await fetch('/api/result');
+    if (r.ok) {
+      const data = await r.json();
+      if (data && data.teen_output) {
+        window.scoringResult = { teen_output: data.teen_output, level: data.level || {}, parent_report_draft: data.parent_report_draft || {} };
+        window.moneyJudgment = data.money_judgment || null;
+        window.skillsComplete = !!window.moneyJudgment;
+        window.alreadyShared = !!data.report_sent;
+        renderResult(window.scoringResult);
+        return;
+      }
+    }
+  } catch (e) { /* fall through */ }
+  showError(session.report_sent
+    ? "This check is already done — your result was shared the way you chose. Nice work."
+    : "This check is already complete.");
 }
 
 // 3-card onboarding before the interview (replaces the long opening message).
@@ -480,7 +502,9 @@ function renderResult(parsed) {
   if (!window.blockParentReport) {
     const banner = elem('div', 'result-banner');
     banner.appendChild(elem('span', 'rb-check', '✓'));
-    banner.appendChild(elem('span', 'rb-text', 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
+    banner.appendChild(elem('span', 'rb-text', window.alreadyShared
+      ? 'You already shared this with ' + window.session.parent_first_name + ' — this is your saved result, and you can re-save it as a PDF below.'
+      : 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
     root.appendChild(banner);
   }
   root.appendChild(buildSystemMap(t));
@@ -531,8 +555,9 @@ function renderResult(parsed) {
     root.appendChild(panel);
   }
 
-  // 9) Accuracy check — "Does this feel true?" before anything is shared.
-  root.appendChild(buildAccuracyCheck());
+  // 9) Accuracy check — "Does this feel true?" before anything is shared. Skipped
+  //    once the report has been sent (the read is settled).
+  if (!window.alreadyShared) root.appendChild(buildAccuracyCheck());
 
   // 10) Guided "What's next": the optional scenarios, save-as-PDF, and the share
   //     step (the PRIMARY action) — each clearly labeled so nothing gets missed.
@@ -547,6 +572,21 @@ function renderResult(parsed) {
 function buildNextSteps() {
   const parent = window.session.parent_first_name;
   const box = elem('div', 'next-steps');
+
+  // Already shared (recovery): read-only with a re-save option.
+  if (window.alreadyShared) {
+    box.appendChild(elem('div', 'ns-title', 'Your saved result'));
+    box.appendChild(elem('div', 'ns-status', '✓ You already shared this with ' + parent + '.'));
+    const pdfStep = elem('div', 'ns-step');
+    pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
+    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it as a PDF so you don’t lose it.'));
+    const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
+    pdfBtn.addEventListener('click', downloadResultPDF);
+    pdfStep.appendChild(pdfBtn);
+    box.appendChild(pdfStep);
+    return box;
+  }
+
   box.appendChild(elem('div', 'ns-title', 'Before you go'));
   if (!window.blockParentReport) box.appendChild(elem('div', 'ns-status', 'Your result is ready — and nothing’s been sent to ' + parent + ' yet.'));
 

@@ -437,6 +437,24 @@ app.get('/api/interview/state', async (req, res) => {
   res.json({ interview_complete: s.interview_complete, report_sent: s.report_sent, safety_blocked: s.safety_blocked, turns, goal: (s.turns && s.turns.goal_chip) || undefined });
 });
 
+// ─── RESULT (recovery on reload) ───────────────────────────────────────────
+// A finished session can re-render its result so a teen who didn't save/share
+// isn't stuck on "already complete". Assembles the stored teen result + the
+// parent draft (single source) + the optional money-judgment.
+app.get('/api/result', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  if (!s.interview_complete || !s.result) return res.status(404).json({ error: 'no result' });
+  const r = s.result || {};
+  res.json({
+    teen_output: r.teen_output || null,
+    level: r.level || null,
+    parent_report_draft: s.report_draft || null,
+    money_judgment: r.money_judgment || null,
+    report_sent: !!s.report_sent
+  });
+});
+
 // ─── SCORE (Prompt B, server-side) ─────────────────────────────────────────
 // Runs the scoring on the server so the parent_report_draft is server-authored
 // and gets stored on the session — the client can never forge the report
@@ -473,7 +491,9 @@ app.post('/api/score', async (req, res) => {
     // Capture a short goal/interest hint so the optional Decision Lab can personalize a scenario.
     const contextHint = (parsed.teen_output && parsed.teen_output.goal_reflected) ? String(parsed.teen_output.goal_reflected).slice(0, 300) : '';
     const mergedTurns = Object.assign({}, session.turns || {}, { context_hint: contextHint });
-    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns });
+    // Store the teen-facing result so a reload can re-render it (recovery).
+    const teenResult = { teen_output: parsed.teen_output || null, level: parsed.level || null };
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns, result: teenResult });
     sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     res.json({ result: parsed }); // no parent_email anywhere in the model output
   } catch (e) {
@@ -514,7 +534,8 @@ app.post('/api/score/refine', async (req, res) => {
       return res.json({ safety: flag });
     }
     stripUnverifiedQuotes(parsed, baseTranscript); // verify quotes against the REAL transcript, not the correction
-    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {} });
+    const refreshed = Object.assign({}, session.result || {}, { teen_output: parsed.teen_output || null, level: parsed.level || null });
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, result: refreshed });
     sendArchiveEmail(session, 'refined assessment', transcript, parsed);
     res.json({ result: parsed });
   } catch (e) {
@@ -553,8 +574,9 @@ app.post('/api/skills-score', async (req, res) => {
       if (!Array.isArray(draft.shareable_items)) draft.shareable_items = [];
       if (!draft.shareable_items.some(i => i.id === 'mj1')) {
         draft.shareable_items.push({ id: 'mj1', category: 'money_judgment', text: mj.parent_line || mj.teen_summary || '', evidence_quote: null });
-        await db.updateSession(session.id, { report_draft: draft });
       }
+      const resultObj = Object.assign({}, (fresh && fresh.result) || {}, { money_judgment: mj }); // recovery
+      await db.updateSession(session.id, { report_draft: draft, result: resultObj });
     }
     sendArchiveEmail(session, 'money scenarios', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     res.json({ money_judgment: mj });
