@@ -199,7 +199,10 @@ app.use(express.json({ limit: '256kb' })); // text-only payloads; 10mb was exces
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    "img-src 'self' data:; connect-src 'self'; " +
+    // Allow the OTS pathway's optional Jay video: YouTube/Vimeo embeds + https <video>.
+    "media-src 'self' https:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; " +
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Frame-Options', 'DENY');

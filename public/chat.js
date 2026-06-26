@@ -97,7 +97,19 @@ async function boot() {
       }
     } catch (e) { /* fall through to a fresh start */ }
   }
-  startInterview();
+  showOnboarding();
+}
+
+// 3-card onboarding before the interview (replaces the long opening message).
+function showOnboarding() {
+  const share = document.getElementById('onboardShare');
+  if (share && window.session && window.session.parent_first_name) {
+    share.textContent = 'If anything goes to ' + window.session.parent_first_name +
+      ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
+  }
+  const btn = document.getElementById('onboardStart');
+  if (btn) btn.onclick = startInterview;
+  showScreen('onboarding');
 }
 
 // Rebuild the chat from the server's stored transcript and let the teen continue.
@@ -956,27 +968,70 @@ function buildBars(bars) {
 
 // Clickable OTS path — shows the teen's actual recommended first skills, not a
 // generic sales card (audit UI #7 — the biggest conversion gap).
+// Set to a YouTube/Vimeo or hosted .mp4 URL to show Jay's short intro video on
+// the OTS pathway. Empty -> a placeholder slot. (CSP allows youtube/vimeo +
+// https media — see server.js security headers.)
+const JAY_VIDEO_URL = '';
+
+function buildVideoSlot() {
+  const slot = elem('div', 'ots-video');
+  if (!JAY_VIDEO_URL) {
+    slot.classList.add('ots-video-ph');
+    slot.appendChild(elem('div', 'ots-video-icon', '▶'));
+    slot.appendChild(elem('div', 'ots-video-label', 'A short word from Jay — coming soon'));
+    return slot;
+  }
+  if (/youtube|youtu\.be|vimeo/.test(JAY_VIDEO_URL)) {
+    const f = document.createElement('iframe');
+    f.src = JAY_VIDEO_URL; f.className = 'ots-video-frame';
+    f.setAttribute('allow', 'fullscreen; picture-in-picture'); f.setAttribute('loading', 'lazy'); f.setAttribute('title', 'A word from Jay');
+    slot.appendChild(f);
+  } else {
+    const v = document.createElement('video');
+    v.src = JAY_VIDEO_URL; v.controls = true; v.className = 'ots-video-frame'; v.setAttribute('playsinline', '');
+    slot.appendChild(v);
+  }
+  return slot;
+}
+
 function showOtsPath() {
   const panel = document.getElementById('otsPanel');
   if (!panel) return;
   if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+  const t = (window.scoringResult && window.scoringResult.teen_output) || {};
   const pf = (window.scoringResult && window.scoringResult.parent_report_draft && window.scoringResult.parent_report_draft.program_fit) || {};
   const lessons = Array.isArray(pf.lessons) ? pf.lessons : [];
+  const unlock = t.biggest_unlock || {};
   panel.innerHTML = '';
-  panel.appendChild(elem('div', 'ots-panel-title', 'Your Outsmart the System path'));
-  if (lessons.length) {
-    panel.appendChild(elem('p', 'ots-panel-text', 'Based on your result, your first skills would be:'));
-    const ul = document.createElement('ul'); ul.className = 'ots-lessons';
-    lessons.forEach(l => { const li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
-    panel.appendChild(ul);
-  } else {
-    panel.appendChild(elem('p', 'ots-panel-text', 'A guided system for turning what you just saw into real skills — at your pace, with your goal at the center.'));
-  }
+  panel.appendChild(elem('div', 'ots-panel-title', 'Your first 3 missions'));
+  panel.appendChild(elem('p', 'ots-panel-text', 'Three concrete moves to turn this into momentum — at your pace, with your goal at the center.'));
+
+  const missions = elem('div', 'ots-missions');
+  let n = 0;
+  const mission = (label, text) => {
+    if (!text) return;
+    const m = elem('div', 'ots-mission');
+    m.appendChild(elem('div', 'ots-mission-num', String(++n)));
+    const body = document.createElement('div');
+    body.appendChild(elem('div', 'ots-mission-label', label));
+    const p = elem('div', 'ots-mission-text'); appendTextWithLineBreaks(p, text); body.appendChild(p);
+    m.appendChild(body);
+    missions.appendChild(m);
+  };
+  mission('Start this week', t.seven_day_move);
+  if (unlock.skill) mission('Build the skill', 'Get real reps on ' + unlock.skill + ' — the one thing that turns what you already have into what you want.');
+  mission('With Outsmart the System', lessons.length
+    ? 'Your first lessons: ' + lessons.join(' · ') + '.'
+    : 'A guided system for turning what you just saw into real skills.');
+  panel.appendChild(missions);
+
+  panel.appendChild(buildVideoSlot());
+
   const link = document.createElement('a');
   link.className = 'btn btn-primary ots-link';
   link.href = 'https://outsmartthesystem.org';
   link.target = '_blank'; link.rel = 'noopener';
-  link.textContent = 'See the program →';
+  link.textContent = 'See what my first week looks like →';
   panel.appendChild(link);
   panel.style.display = 'block';
 }
@@ -1295,7 +1350,7 @@ function appendTextWithLineBreaks(parent, text) {
 
 // ─── UI PLUMBING ─────────────────────────────────────────────────────────
 function showScreen(name) {
-  ['loading', 'error', 'resume', 'chat', 'result', 'preview', 'sent'].forEach(s => {
+  ['loading', 'error', 'resume', 'onboarding', 'chat', 'result', 'preview', 'sent'].forEach(s => {
     const el = document.getElementById('screen-' + s);
     if (el) el.style.display = (s === name) ? 'flex' : 'none';
   });
