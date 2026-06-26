@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --env-file=.env server.js",
-    "build:prompts": "node build-prompts.js"
+    "build:prompts": "node build-prompts.js",
+    "test": "node test/run.js"
   },
   "engines": {
     "node": ">=20.6"

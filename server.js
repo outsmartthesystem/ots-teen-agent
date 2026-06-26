@@ -567,6 +567,30 @@ const REPORT_CATEGORY_LABEL = {
   program_fit: 'How OTS could help',
   support_request: 'How they’d like your support'
 };
+// Build the approved parent-report items from the SERVER-STORED draft + the
+// teen's selections. Pure + exported so the forgery-resistance is unit-tested:
+// only ids that exist in the stored draft can appear; unknown/forged ids are
+// dropped; quotes ride only when includeQuote isn't false.
+function buildApprovedItems(draft, selections, supportRaw) {
+  draft = draft || {};
+  const selById = {};
+  (Array.isArray(selections) ? selections : []).forEach(x => { if (x && x.id) selById[x.id] = x; });
+  const available = Array.isArray(draft.shareable_items) ? draft.shareable_items.slice() : [];
+  if (draft.growth_horizon) available.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null });
+  if (draft.confidence_summary) available.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null });
+  if (draft.program_fit && draft.program_fit.text) available.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null });
+  const items = [];
+  available.forEach(it => {
+    const sel = selById[it.id];
+    if (!sel || !sel.include) return; // not selected, or forged id with no stored item
+    const edited = (typeof sel.text === 'string' && sel.text.trim()) ? sel.text.trim().slice(0, 2000) : it.text;
+    items.push({ id: it.id, category: it.category, text: edited, evidence_quote: sel.includeQuote === false ? null : (it.evidence_quote || null) });
+  });
+  const support = (typeof supportRaw === 'string') ? supportRaw.trim().slice(0, 500) : '';
+  if (support) items.push({ id: 'sr1', category: 'support_request', text: support, evidence_quote: null });
+  return items;
+}
+
 function buildParentEmail(report, teenName, parentName) {
   const allItems = Array.isArray(report.shareable_items) ? report.shareable_items : [];
   const items = allItems.filter(it => it.category !== 'support_request');
@@ -645,31 +669,9 @@ app.post('/api/parent-report', async (req, res) => {
   // include, optional rephrasings, quote on/off) + an optional support line.
   const draft = s.report_draft;
   if (!draft) return res.status(400).json({ error: 'no report to send' });
-  const selections = Array.isArray(req.body && req.body.selections) ? req.body.selections : [];
-  const selById = {};
-  selections.forEach(x => { if (x && x.id) selById[x.id] = x; });
 
-  // The full set of vetoable items the teen could have seen, all from the stored
-  // draft (mirrors the client preview): the model's shareable_items plus the
-  // personalized growth-horizon / confidence / program-fit lines.
-  const available = Array.isArray(draft.shareable_items) ? draft.shareable_items.slice() : [];
-  if (draft.growth_horizon) available.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null });
-  if (draft.confidence_summary) available.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null });
-  if (draft.program_fit && draft.program_fit.text) available.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null });
-
-  const approvedItems = [];
-  available.forEach(it => {
-    const sel = selById[it.id];
-    if (!sel || !sel.include) return; // teen kept it private (or never selected it)
-    const edited = (typeof sel.text === 'string' && sel.text.trim()) ? sel.text.trim().slice(0, 2000) : it.text;
-    approvedItems.push({
-      id: it.id, category: it.category, text: edited,
-      evidence_quote: sel.includeQuote === false ? null : (it.evidence_quote || null)
-    });
-  });
-  const support = (req.body && typeof req.body.support_request === 'string') ? req.body.support_request.trim().slice(0, 500) : '';
-  if (support) approvedItems.push({ id: 'sr1', category: 'support_request', text: support, evidence_quote: null });
-
+  // Build the report from the SERVER-STORED draft + the teen's selections only.
+  const approvedItems = buildApprovedItems(draft, req.body && req.body.selections, req.body && req.body.support_request);
   const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null, parent_action: draft.parent_action || '', conversation_starter: draft.conversation_starter || '' };
 
   // ATOMIC one-time claim: exactly one caller wins; concurrent/repeat callers and
@@ -881,8 +883,19 @@ app.get('/api/health', (req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── START SERVER ──────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
-db.init()
-  .then(() => console.log('session store ready:', db.backend()))
-  .catch(e => console.error('[DB_INIT_FAILED] data store unreachable — API will FAIL CLOSED (503) until it recovers:', e.message))
-  .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()}, ready: ${db.ready()})`)));
+// Only when run directly (node server.js). When require()'d by the test suite,
+// nothing listens and no DB init runs — the exported pure helpers are testable.
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  db.init()
+    .then(() => console.log('session store ready:', db.backend()))
+    .catch(e => console.error('[DB_INIT_FAILED] data store unreachable — API will FAIL CLOSED (503) until it recovers:', e.message))
+    .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()}, ready: ${db.ready()})`)));
+}
+
+module.exports = {
+  app,
+  buildApprovedItems, buildParentEmail,
+  formatTranscript, stripUnverifiedQuotes, validateScoring, validScore,
+  parseScoringJSON, phaseFor, interviewQuestionNum
+};
