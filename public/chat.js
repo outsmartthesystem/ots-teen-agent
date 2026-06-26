@@ -390,7 +390,11 @@ async function runScoring() {
     if (!r.ok || !data.result) throw new Error((data && data.error) || 'Could not get a valid result');
 
     window.scoringResult = data.result;
-    renderResult(data.result);
+    // Guided completion (Avi/ChatGPT feedback): instead of dropping the teen on a
+    // passive result, offer the Decision Lab as the clear recommended next step
+    // FIRST — so the 5 scenarios aren't a buried afterthought.
+    if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) showDecisionLabPrompt();
+    else renderResult(data.result);
   } catch (e) {
     status.remove();
     console.error('Scoring error:', e);
@@ -435,6 +439,26 @@ function parseScoringJSON(text) {
   try { return JSON.parse(t.slice(start, end + 1)); } catch { return null; }
 }
 
+// Guided interstitial after scoring: the Decision Lab is the recommended next
+// step BEFORE the full result, so it's a clear decision, not a buried button.
+function showDecisionLabPrompt() {
+  showScreen('result');
+  const root = document.getElementById('resultBody');
+  root.innerHTML = '';
+  const name = window.session.teen_first_name;
+  const box = elem('div', 'dl-prompt');
+  box.appendChild(elem('div', 'dl-pill', 'Your read is ready'));
+  box.appendChild(elem('h1', 'result-h1', name + ', one quick thing first'));
+  box.appendChild(elem('p', 'dl-text', 'Your readiness map is done — but the complete version adds five quick real-life money decisions (about 3 minutes). It makes your result sharper and gives a more credible read for whatever you choose to share. Most people say it’s the most interesting part.'));
+  const add = elem('button', 'btn btn-primary dl-add', 'Add the 5 scenarios →');
+  add.addEventListener('click', startSkills);
+  const skip = elem('button', 'btn btn-ghost dl-skip', 'Skip — just show my result');
+  skip.addEventListener('click', () => renderResult(window.scoringResult));
+  box.appendChild(add); box.appendChild(skip);
+  root.appendChild(box);
+  scrollResultTop();
+}
+
 // STEP 3: the teen result view. Warm by design (the interview was neutral).
 // Renders teen_output: stage badge, the goal mirror, the five-bar chart (null
 // dimensions render as "not enough info yet"), strength + verbatim quote, the
@@ -453,6 +477,12 @@ function renderResult(parsed) {
   //    already working → the system you're running → friction → lever → 7-day
   //    move. The teen feels UNDERSTOOD before being EVALUATED (stage/bars below).
   root.appendChild(elem('h1', 'result-h1', name + ', here’s where you are'));
+  if (!window.blockParentReport) {
+    const banner = elem('div', 'result-banner');
+    banner.appendChild(elem('span', 'rb-check', '✓'));
+    banner.appendChild(elem('span', 'rb-text', 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
+    root.appendChild(banner);
+  }
   root.appendChild(buildSystemMap(t));
 
   // 5) The evidence behind it — stage, confidence, the dimension map. Placed
@@ -517,7 +547,8 @@ function renderResult(parsed) {
 function buildNextSteps() {
   const parent = window.session.parent_first_name;
   const box = elem('div', 'next-steps');
-  box.appendChild(elem('div', 'ns-title', 'What’s next'));
+  box.appendChild(elem('div', 'ns-title', 'Before you go'));
+  if (!window.blockParentReport) box.appendChild(elem('div', 'ns-status', 'Your result is ready — and nothing’s been sent to ' + parent + ' yet.'));
 
   if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
     const step = elem('div', 'ns-step');
@@ -546,9 +577,22 @@ function buildNextSteps() {
     const cta = elem('button', 'btn btn-primary result-cta ns-btn-lg', 'Choose what ' + parent + ' sees →');
     cta.addEventListener('click', showPreview);
     shareStep.appendChild(cta);
+    const priv = elem('button', 'btn btn-ghost ns-private', 'Keep this private — send nothing');
+    priv.addEventListener('click', keepPrivate);
+    shareStep.appendChild(priv);
     box.appendChild(shareStep);
   }
   return box;
+}
+
+// Explicit "keep private" — a durable end state, so a teen who doesn't want to
+// share isn't left in limbo. Ends the session (clears the cookie) and confirms.
+async function keepPrivate() {
+  const parent = window.session.parent_first_name;
+  if (!confirm('Keep this just for you? Nothing will be sent to ' + parent + '.')) return;
+  clearSession();
+  try { await fetch('/api/session/end', { method: 'POST' }); } catch (e) {}
+  renderSent(false);
 }
 
 // ─── YOUR SYSTEM MAP (branded result heart) ──────────────────────────────

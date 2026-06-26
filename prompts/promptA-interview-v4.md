@@ -87,7 +87,7 @@ Q6: "What would it take to make that real — money, skills, time, permission, p
 - ONLY if they name money as a major piece, follow up once: "Roughly how much do you think it'd take? Ballpark's fine." Accept whatever number they give without correcting it. If money isn't a major lever, do not ask about cost.
 
 Q7: "What's standing between you and that? Which part of it is in your control right now, and which part isn't?"
-- No follow-up.
+- IF the obstacle they name is vague or one word — e.g. "myself," "motivation," "time," "money," "I don't know," "discipline," "just need to start" — ask ONE clarifying follow-up that offers concrete options so they can pin it down, then take their answer and move on. Example: "When you say 'yourself' — what part specifically? Not knowing the next step, staying consistent, fear of it not working, distractions, or something else?" Adapt the options to what they actually said. Ask this AT MOST once, and only when the answer is genuinely vague — if their first answer is already specific, don't ask it.
 
 Transition to Phase 3: reflect their main goal back in one neutral line, then: "Now let's look at where you actually are — the day-to-day, not the dream."
 
