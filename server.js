@@ -684,7 +684,7 @@ function buildParentEmail(report, teenName, parentName) {
   // ── HTML ──
   let h = '';
   h += `<p>Hi ${escHtml(parentName)},</p>`;
-  h += `<p>${escHtml(teenName)} just completed the Outsmart the System Money & Motivation Map. They saw their own result first and chose what to share with you — here it is.</p>`;
+  h += `<p>${escHtml(teenName)} just completed their Teen Money & Momentum Map. They saw their own result first and chose what to share with you — here it is.</p>`;
   if (ff.limitation) h += `<p style="font-size:13px;color:#555;background:#f5f6f8;padding:11px 14px;border-radius:8px;margin:16px 0">${escHtml(ff.limitation)}</p>`;
   items.forEach(it => {
     h += `<div style="margin:14px 0;padding:12px 16px;border-left:3px solid #2f6df0;background:#f6f9ff;border-radius:0 8px 8px 0">`;
@@ -712,7 +712,7 @@ function buildParentEmail(report, teenName, parentName) {
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.55;font-size:15px">${h}</div>`;
 
   // ── plaintext ──
-  let t = `Hi ${parentName},\n\n${teenName} just completed the Outsmart the System Money & Motivation Map. They saw their own result first and chose what to share with you.\n\n`;
+  let t = `Hi ${parentName},\n\n${teenName} just completed their Teen Money & Momentum Map. They saw their own result first and chose what to share with you.\n\n`;
   if (ff.limitation) t += ff.limitation + '\n\n';
   items.forEach(it => {
     t += (REPORT_CATEGORY_LABEL[it.category] || 'Shared').toUpperCase() + '\n' + it.text + '\n';
@@ -733,7 +733,7 @@ function buildParentEmail(report, teenName, parentName) {
   }
   t += 'Outsmart the System — outsmartthesystem.org\nApproved by ' + teenName + ' before sending.';
 
-  return { subject: `${teenName}'s Money & Motivation Map — what they chose to share`, html, text: t };
+  return { subject: `${teenName}'s Money & Momentum Map — what they chose to share`, html, text: t };
 }
 
 app.post('/api/parent-report', async (req, res) => {
@@ -821,11 +821,11 @@ const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}` (alert dedup 
 function buildSafetyEmail(flag, info) {
   const name = escHtml(info.teen_first_name || 'a teen');
   const age = escHtml(info.teen_age);
-  const subject = `⚠️ OTS Money & Motivation Map — ${flag} flag — ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
+  const subject = `⚠️ OTS Money & Momentum Map — ${flag} flag — ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
   let h = '';
   h += `<div style="background:${flag === 'ABUSE' ? '#7a1f1f' : '#8a4b00'};color:#fff;padding:12px 16px;border-radius:10px 10px 0 0;font-weight:700;font-size:16px">Safety flag: ${escHtml(flag)}</div>`;
   h += `<div style="border:1px solid #e2e2e2;border-top:none;border-radius:0 0 10px 10px;padding:16px">`;
-  h += `<p>A teen using the Money & Motivation Map just triggered a <b>${escHtml(flag)}</b> safety flag.</p>`;
+  h += `<p>A teen using the Money & Momentum Map just triggered a <b>${escHtml(flag)}</b> safety flag.</p>`;
   if (flag === 'ABUSE') {
     h += `<p style="background:#fdecec;border:1px solid #f5b5b5;color:#7a1f1f;padding:11px 14px;border-radius:8px;font-weight:600">⚠️ Do NOT contact the parent. The parent who set this up may be the concern. Follow the ABUSE branch of the SOP.</p>`;
   }
@@ -836,8 +836,8 @@ function buildSafetyEmail(flag, info) {
   h += `</tbody></table>`;
   h += `<p style="color:#555;font-size:13px">This alert contains <b>no quotes</b> from the teen, by policy. The teen has already been shown crisis resources (988/911) in the conversation, and no report will go to the parent for this session.</p>`;
   h += `<p style="font-weight:600;margin:14px 0 4px">What to do now</p>`;
-  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Money & Motivation Map Safety SOP. OTS's role is to connect the teen to real help, not to counsel. Never forward this to the parent.</p>`;
-  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Money & Motivation Map safety routing</p>`;
+  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Money & Momentum Map Safety SOP. OTS's role is to connect the teen to real help, not to counsel. Never forward this to the parent.</p>`;
+  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Money & Momentum Map safety routing</p>`;
   h += `</div>`;
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.5;font-size:15px">${h}</div>`;
   return { subject, html };
@@ -885,7 +885,7 @@ async function sendArchiveEmail(session, kind, transcript, assessment) {
   const to = process.env.ARCHIVE_EMAIL_TO;
   const pretty = (() => { try { return JSON.stringify(assessment, null, 2); } catch { return String(assessment); } })();
   const pre = 'white-space:pre-wrap;word-break:break-word;background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;padding:12px;font-size:12px';
-  const subject = `[Money & Motivation Map archive] ${session.teen_first_name} (${session.teen_age}) — ${kind}`;
+  const subject = `[Money & Momentum Map archive] ${session.teen_first_name} (${session.teen_age}) — ${kind}`;
   const html =
     `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:760px;color:#1a1a1a;line-height:1.5;font-size:14px">` +
     `<p style="background:#fff7e6;border:1px solid #ffe0a3;padding:8px 12px;border-radius:8px;font-size:12px">TEST-PHASE RECORDING — internal improvement data. Turn off by clearing <b>ARCHIVE_EMAIL_TO</b> before go-live.</p>` +
