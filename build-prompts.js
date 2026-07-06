@@ -11,10 +11,10 @@ const fs = require('fs');
 const path = require('path');
 
 const PROMPTS = [
-  { file: 'promptA-interview-v4.md', global: 'PROMPT_A' },
-  { file: 'promptB-scoring-v4.md', global: 'PROMPT_B' },
-  { file: 'promptC-skills-v1.md', global: 'PROMPT_C' },
-  { file: 'promptD-skills-scoring-v1.md', global: 'PROMPT_D' }
+  { file: 'promptA-interview-v5.md', global: 'PROMPT_A' },
+  { file: 'promptB-scoring-v5.md', global: 'PROMPT_B' },
+  { file: 'promptC-skills-v2.md', global: 'PROMPT_C' },
+  { file: 'promptD-skills-scoring-v2.md', global: 'PROMPT_D' }
 ];
 
 function extractFenced(file) {
@@ -37,10 +37,12 @@ fs.writeFileSync(path.join(dir, 'prompts.js'), out);
 console.log('prompts.js written —', sizes.join(', '));
 
 // Sanity checks.
-const A = extractFenced(path.join(dir, 'prompts', 'promptA-interview-v4.md'));
-['{{TEEN_FIRST_NAME}}', '{{PARENT_FIRST_NAME}}', '{{TEEN_AGE}}', '{{TEEN_AGE_PLUS_3}}'].forEach(ph => {
+const A = extractFenced(path.join(dir, 'prompts', 'promptA-interview-v5.md'));
+// v5 note: Q4's horizon is chosen by the model from {{TEEN_AGE}}, so {{TEEN_AGE_PLUS_3}}
+// is no longer required in Prompt A.
+['{{TEEN_FIRST_NAME}}', '{{PARENT_FIRST_NAME}}', '{{TEEN_AGE}}'].forEach(ph => {
   if (!A.includes(ph)) console.warn(`WARNING: Prompt A is missing placeholder ${ph}`);
 });
 if (!A.includes('[INTERVIEW_COMPLETE]')) console.warn('WARNING: Prompt A missing [INTERVIEW_COMPLETE]');
-const C = extractFenced(path.join(dir, 'prompts', 'promptC-skills-v1.md'));
+const C = extractFenced(path.join(dir, 'prompts', 'promptC-skills-v2.md'));
 if (!C.includes('[SKILLS_COMPLETE]')) console.warn('WARNING: Prompt C missing [SKILLS_COMPLETE]');

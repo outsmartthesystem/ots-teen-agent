@@ -76,10 +76,11 @@ test('validateScoring: accepts valid, rejects malformed, honors safety', () => {
   eq(srv.validateScoring({ safety_check: { clear: true }, teen_output: { bars: [{ dimension: 'V', score: 7 }] } }), false, 'bad bar score fails');
 });
 test('phaseFor: phase boundaries', () => {
-  eq(srv.phaseFor(1), 'Getting started');
+  eq(srv.phaseFor(1), 'Arrival');
   eq(srv.phaseFor(4), 'What you want');
-  eq(srv.phaseFor(9), 'Your money reality');
-  eq(srv.phaseFor(15), 'Patterns & your move');
+  eq(srv.phaseFor(12), 'The reality check');
+  eq(srv.phaseFor(17), 'Family patterns');
+  eq(srv.phaseFor(21), 'The gap');
 });
 test('parseScoringJSON: fenced, plain, garbage', () => {
   eq(srv.parseScoringJSON('```json\n{"a":1}\n```').a, 1, 'fenced');

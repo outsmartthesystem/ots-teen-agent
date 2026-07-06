@@ -1,6 +1,6 @@
 # OTS Teen Agent
 
-The **Outsmart the System Teen Check** — a ~15–20 minute AI-guided self-discovery
+The **Outsmart the System Money & Motivation Map** — a ~15–20 minute AI-guided self-discovery
 interview that shows a teen where they are on five money dimensions, names the gap
 between where they are and where they want to be, and produces two outputs: a warm
 result for the **teen** and a separate, **teen-approved** report for the **parent**.
