@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Build prompts (regenerate prompts.js)
+        run: node build-prompts.js
+      - name: Unit + integration tests
+        run: npm test
+      - name: Audit (high severity, prod deps)
+        run: npm audit --omit=dev --audit-level=high

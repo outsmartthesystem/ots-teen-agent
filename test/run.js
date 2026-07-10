@@ -144,6 +144,30 @@ test('phaseFor: phase boundaries', () => {
   eq(srv.phaseFor(17), 'Family patterns');
   eq(srv.phaseFor(21), 'The gap');
 });
+test('computeScoreMetadata: 5 dims -> total + stage + canonical bars', () => {
+  const p = { scoring: { vision:{score:4}, awareness:{score:3}, self_regulation:{score:4}, pattern_awareness:{score:3}, agency:{score:4} }, level:{}, profile:{}, teen_output:{ bars:[], stage_display:'' } };
+  srv.computeScoreMetadata(p);
+  eq(p.level.total, 18, 'total = sum of scores');
+  eq(p.level.stage, 'Building', 'stage from band');
+  eq(p.level.show_level, true, 'level shown when all 5 assessed');
+  eq(p.teen_output.stage_display, 'Building', 'stage_display set');
+  eq(p.teen_output.bars.length, 5, 'five bars');
+  eq(p.teen_output.bars[2].dimension, 'Self-Regulation', 'canonical order');
+  eq(p.profile.strongest_dimension, 'Vision', 'strongest = first highest');
+});
+test('computeScoreMetadata: <5 dims hides the level, preserves null bars', () => {
+  const p = { scoring: { vision:{score:4}, awareness:{score:null}, self_regulation:{score:3}, pattern_awareness:{score:null}, agency:{score:4} }, level:{ show_level:true, total:11, stage:'Aware' }, profile:{}, teen_output:{ bars:[], stage_display:'Aware' } };
+  srv.computeScoreMetadata(p);
+  eq(p.level.show_level, false, 'partial level hidden');
+  eq(p.level.total, null, 'no total');
+  eq(p.teen_output.stage_display, '', 'stage_display cleared');
+  eq(p.teen_output.bars[1].score, null, 'null bar preserved');
+});
+test('stageForTotal: band boundaries', () => {
+  eq(srv.stageForTotal(9), 'Waking Up'); eq(srv.stageForTotal(10), 'Aware');
+  eq(srv.stageForTotal(14), 'In Motion'); eq(srv.stageForTotal(18), 'Building');
+  eq(srv.stageForTotal(22), 'Outsmarting');
+});
 test('parseScoringJSON: fenced, plain, garbage', () => {
   eq(srv.parseScoringJSON('```json\n{"a":1}\n```').a, 1, 'fenced');
   eq(srv.parseScoringJSON('noise {"a":2} trailing').a, 2, 'embedded');

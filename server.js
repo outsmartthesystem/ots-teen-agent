@@ -176,6 +176,59 @@ function stripUnverifiedQuotes(parsed, transcriptText) {
   if (dropped) console.warn('[QUOTE_VERIFY] nulled ' + dropped + ' unverified quote(s)');
 }
 
+// Deterministic scoring metadata (D2): recompute level/total/stage/bars from the
+// per-dimension scores rather than trusting the model's arithmetic. Overwrites the
+// model's level, teen_output.bars, stage_display, and profile.strongest_dimension.
+const DIMS = [
+  { key: 'vision', label: 'Vision' },
+  { key: 'awareness', label: 'Awareness' },
+  { key: 'self_regulation', label: 'Self-Regulation' },
+  { key: 'pattern_awareness', label: 'Pattern Awareness' },
+  { key: 'agency', label: 'Agency' }
+];
+function stageForTotal(total) {
+  if (total >= 22) return 'Outsmarting';
+  if (total >= 18) return 'Building';
+  if (total >= 14) return 'In Motion';
+  if (total >= 10) return 'Aware';
+  return 'Waking Up';
+}
+function computeScoreMetadata(parsed) {
+  if (!parsed || !parsed.scoring || !parsed.teen_output) return parsed;
+  const scoring = parsed.scoring;
+  const scores = DIMS.map(d => (scoring[d.key] && Number.isInteger(scoring[d.key].score)) ? scoring[d.key].score : null);
+  const dimensions_assessed = scores.filter(s => s != null).length;
+  // Rebuild bars in canonical order from the authoritative scores.
+  parsed.teen_output.bars = DIMS.map((d, i) => ({ dimension: d.label, score: scores[i] }));
+  const level = parsed.level || {};
+  level.dimensions_assessed = dimensions_assessed;
+  if (dimensions_assessed === 5) {
+    const total = scores.reduce((a, b) => a + b, 0);
+    level.show_level = true; level.total = total; level.stage = stageForTotal(total); level.reason_if_hidden = null;
+    parsed.teen_output.stage_display = level.stage;
+  } else {
+    // Partial totals under-rate against a five-dimension band — hide the level.
+    level.show_level = false; level.total = null; level.stage = null;
+    level.reason_if_hidden = level.reason_if_hidden || 'Not all five dimensions had enough evidence to show an overall level.';
+    parsed.teen_output.stage_display = '';
+  }
+  parsed.level = level;
+  // Strongest = highest score (deterministic). Keep the model's growth area if it
+  // names a real dimension, else fall back to the lowest-scored.
+  const prof = parsed.profile || {};
+  const labels = DIMS.map(d => d.label);
+  let bestI = -1, bestV = -1;
+  scores.forEach((s, i) => { if (s != null && s > bestV) { bestV = s; bestI = i; } });
+  if (bestI >= 0) prof.strongest_dimension = labels[bestI];
+  if (!prof.primary_growth_area || labels.indexOf(prof.primary_growth_area) === -1) {
+    let worstI = -1, worstV = 99;
+    scores.forEach((s, i) => { if (s != null && s < worstV) { worstV = s; worstI = i; } });
+    if (worstI >= 0) prof.primary_growth_area = labels[worstI];
+  }
+  parsed.profile = prof;
+  return parsed;
+}
+
 const INTERVIEW_SUB = (s) => SERVER_PROMPTS.A
   .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
   .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
@@ -568,6 +621,7 @@ app.post('/api/score', async (req, res) => {
       return res.json({ safety: flag });
     }
     stripUnverifiedQuotes(parsed, transcript); // drop any quote not actually in the transcript
+    computeScoreMetadata(parsed); // D2: recompute level/bars/stage from the scores
     // Capture a short goal/interest hint so the optional Decision Lab can personalize a scenario.
     const contextHint = (parsed.teen_output && parsed.teen_output.goal_reflected) ? String(parsed.teen_output.goal_reflected).slice(0, 300) : '';
     const mergedTurns = Object.assign({}, session.turns || {}, { context_hint: contextHint });
@@ -619,6 +673,7 @@ app.post('/api/score/refine', async (req, res) => {
       return res.json({ safety: flag });
     }
     stripUnverifiedQuotes(parsed, baseTranscript); // verify quotes against the REAL transcript, not the correction
+    computeScoreMetadata(parsed); // D2: recompute level/bars/stage from the scores
     const refreshed = Object.assign({}, session.result || {}, { teen_output: parsed.teen_output || null, level: parsed.level || null });
     await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, result: refreshed });
     sendArchiveEmail(session, 'refined assessment', transcript, parsed);
@@ -1083,5 +1138,6 @@ module.exports = {
   app,
   buildApprovedItems, buildParentEmail,
   formatTranscript, stripUnverifiedQuotes, validateScoring, validScore,
-  parseScoringJSON, phaseFor, interviewQuestionNum
+  parseScoringJSON, phaseFor, interviewQuestionNum,
+  computeScoreMetadata, stageForTotal
 };
