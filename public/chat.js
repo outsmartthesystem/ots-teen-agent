@@ -20,7 +20,10 @@ const MODEL_INTERVIEW = 'claude-sonnet-4-6';
 const MODEL_SCORING   = 'claude-opus-4-8';      // scoring is one careful call; use the stronger model
 const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
 const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';      // ends the optional scenario check
-const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/;
+const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|EXPLOITATION|THREAT|SUPPORT)\]/;
+// Serious flags halt the interview, block the parent report, and are never persisted
+// or resumed on the device. SUPPORT/DISTRESS are not serious (interview continues).
+const SERIOUS_SAFETY = ['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT'];
 const TOTAL_QUESTIONS = 22;      // v5: 22 interview turns (server-side count is authoritative)
 const SESSION_KEY = 'ots_teen_session_v1';
 const SESSION_MAX_AGE_HOURS = 24;
@@ -31,7 +34,7 @@ const conversationHistory = []; // interview turns [{ role, content }]
 const skillsHistory = [];       // optional scenario-check turns [{ role, content }]
 window.mode = 'interview';      // 'interview' | 'skills' — which loop is running
 window.session = null;          // teen-safe fields from /api/session(/start); auth is the cookie
-window.safetyEvent = null;      // null | 'CRISIS' | 'ABUSE' | 'SUPPORT'
+window.safetyEvent = null;      // null | 'CRISIS' | 'ABUSE' | 'EXPLOITATION' | 'THREAT' | 'SUPPORT'
 window.halted = false;          // hard stop (CRISIS): no more turns, no scoring
 window.blockParentReport = false; // CRISIS or ABUSE: this session never produces a parent report
 window.interviewComplete = false;
@@ -399,23 +402,24 @@ function setGoalChip(goal) {
 // path) is step 7 and is NOT built. reportSafetyEvent is the seam for it.
 function handleSafety(flag) {
   window.safetyEvent = flag;
-  // Purge the transcript from the device NOW for serious flags, so the
-  // disclosure can't be reopened on a shared/parent device. saveSession() also
-  // refuses to write once safetyEvent is CRISIS/ABUSE.
-  if (flag === 'CRISIS' || flag === 'ABUSE') clearSession();
+  // Serious flags halt the interview, block the parent report, and purge the
+  // transcript from the device NOW so the disclosure can't be reopened on a
+  // shared/parent device. saveSession() also refuses to write once safetyEvent
+  // is one of these. The server independently sets a durable safety_blocked and
+  // purges its copy — the client stop is UX, the server block is authoritative.
+  const serious = SERIOUS_SAFETY.indexOf(flag) !== -1;
+  if (serious) clearSession();
   showResources(flag);
   reportSafetyEvent(flag);
 
-  if (flag === 'CRISIS') {
+  if (serious) {
     window.halted = true;
     window.blockParentReport = true;
-    disableInputPermanently('Paused. The most important thing right now is talking to someone who can help — the options above are there for you.');
-  } else if (flag === 'ABUSE') {
-    // The server has closed this session — it will never produce a parent report,
-    // and further turns are refused. Surface resources and stop here.
-    window.halted = true;
-    window.blockParentReport = true;
-    disableInputPermanently('This is a good place to pause. The people and numbers above can actually help with what you’re carrying.');
+    let msg;
+    if (flag === 'CRISIS') msg = 'Paused. The most important thing right now is talking to someone who can help — the options above are there for you.';
+    else if (flag === 'THREAT') msg = 'Let’s pause here. If someone could get hurt, the numbers above can help right now.';
+    else msg = 'This is a good place to pause. The people and numbers above can actually help with what you’re carrying.';
+    disableInputPermanently(msg);
   }
   // SUPPORT: resources shown, interview continues.
 }
@@ -1498,7 +1502,7 @@ function estimateQuestion() {
 function saveSession() {
   if (!window.session) return;
   // Never write a transcript to the device once a serious safety event has fired.
-  if (window.safetyEvent === 'CRISIS' || window.safetyEvent === 'ABUSE') return;
+  if (SERIOUS_SAFETY.indexOf(window.safetyEvent) !== -1) return;
   const state = {
     conversationHistory,
     safetyEvent: window.safetyEvent,
@@ -1520,7 +1524,7 @@ function loadSession() {
     if (ageH > SESSION_MAX_AGE_HOURS) { clearSession(); return null; }
     if (state.interviewComplete) { clearSession(); return null; }
     // Never resume or re-display a safety-flagged session.
-    if (state.safetyEvent === 'CRISIS' || state.safetyEvent === 'ABUSE') { clearSession(); return null; }
+    if (SERIOUS_SAFETY.indexOf(state.safetyEvent) !== -1) { clearSession(); return null; }
     return state;
   } catch (e) { return null; }
 }
@@ -1577,12 +1581,19 @@ function showResources(flag) {
   const div = document.createElement('div');
   div.id = 'resourcesCard';
   div.className = 'resources';
-  // US resources per Prompt A. Region-aware list is step 7. Never described as
-  // "private" or "anonymous"; never promises confidentiality.
-  div.innerHTML =
+  // US resources per Prompt A. Region-aware list is a documented follow-up. Never
+  // described as "private" or "anonymous"; never promises confidentiality.
+  let html =
     '<strong>If you’re carrying something heavy</strong>' +
     '<p>You can call or text <b>988</b> (Suicide &amp; Crisis Lifeline) any time — it’s free and trained people answer. ' +
     'You can also chat at <b>988lifeline.org</b>. If you might be in immediate danger, call <b>911</b>.</p>';
+  if (flag === 'EXPLOITATION') {
+    // Sextortion / image-based coercion: point to removal + reporting help.
+    html +=
+      '<p>If someone is pressuring you over private or sexual images, you’re not in trouble and this can be stopped. ' +
+      'You can get free help getting images taken down at <b>takeitdown.ncmec.org</b>, and report it at <b>report.cybertip.org</b>.</p>';
+  }
+  div.innerHTML = html;
   document.getElementById('messages').appendChild(div);
   scrollToBottom();
 }

@@ -19,7 +19,9 @@ services:
         sync: false
       - key: EMAIL_PASS             # Gmail app password
         sync: false
-      - key: SAFETY_ALERT_TO        # where CRISIS/ABUSE alerts go (defaults to EMAIL_USER)
+      - key: SAFETY_ALERT_TO        # where safety alerts go (defaults to EMAIL_USER)
+        sync: false
+      - key: SAFETY_ALERT_BACKUP_TO # backup responder CC'd on every alert; REQUIRED before LAUNCH_MODE=production
         sync: false
       - key: ARCHIVE_EMAIL_TO       # TEST PHASE ONLY: full session record emailed here; clear to disable
         sync: false

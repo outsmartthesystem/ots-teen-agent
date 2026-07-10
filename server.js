@@ -96,7 +96,7 @@ const SEED_MARKER = '__SEED_BEGIN__';
 const TOTAL_QUESTIONS = 22; // v5: was 16 — splits of the old double-barrels + 2 new questions
 const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
 const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';
-const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/;
+const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|EXPLOITATION|THREAT|SUPPORT)\]/;
 
 function stripSentinels(s) {
   return String(s || '')
@@ -1158,38 +1158,86 @@ app.post('/api/parent-report', async (req, res) => {
 // are recorded only (no email) so alert fatigue can't bury a real CRISIS.
 // The alert carries NO quotes from the teen — only flag, first name, age, sid.
 // ABUSE alerts are stamped do_not_contact_parent: the parent may be the threat.
-const SAFETY_FLAGS = new Set(['CRISIS', 'ABUSE', 'SUPPORT', 'DISTRESS']);
-const SAFETY_EMAIL_FLAGS = new Set(['CRISIS', 'ABUSE']);
-const SAFETY_BLOCK_FLAGS = new Set(['CRISIS', 'ABUSE']); // these block any parent report
+const SAFETY_FLAGS = new Set(['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT', 'SUPPORT', 'DISTRESS']);
+const SAFETY_EMAIL_FLAGS = new Set(['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT']);
+const SAFETY_BLOCK_FLAGS = new Set(['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT']); // these block any parent report
 const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}` (alert dedup only)
 // The durable parent-report block now lives in the session row (safety_blocked),
 // set by the callers below — not an in-memory set.
 
-// Pre-render the responder alert email. Contains NO teen disclosure — only the
-// flag, first name, age, session id. ABUSE carries a do-not-contact-parent banner.
+// Per-flag responder metadata (Safety SOP taxonomy). label = the granular class
+// name carried in the alert; severity drives triage; resources = what the teen was
+// already shown; doNotContactParent = the parent may be the source of harm, never
+// contact them; supervisor = escalate to a supervisor / emergency decision tree.
+const SAFETY_META = {
+  CRISIS:       { severity: 'high', label: 'CRISIS_SELF_HARM',        resources: '988, 911',                                                        doNotContactParent: false, supervisor: false },
+  ABUSE:        { severity: 'high', label: 'ABUSE',                   resources: '988, 911',                                                        doNotContactParent: true,  supervisor: false },
+  EXPLOITATION: { severity: 'high', label: 'EXPLOITATION_SEXTORTION', resources: '988, 911, Take It Down (takeitdown.ncmec.org), NCMEC CyberTipline', doNotContactParent: true,  supervisor: false },
+  THREAT:       { severity: 'high', label: 'CRISIS_THREAT_TO_OTHERS', resources: '988, 911',                                                        doNotContactParent: false, supervisor: true  },
+  SUPPORT:      { severity: 'low',  label: 'SUPPORT',                 resources: '988',                                                             doNotContactParent: false, supervisor: false },
+  DISTRESS:     { severity: 'low',  label: 'SUPPORT',                 resources: '988',                                                             doNotContactParent: false, supervisor: false }
+};
+
+// Pre-render the responder alert email. Contains NO teen disclosure and NO quotes —
+// only the flag/class, an event id, severity, timestamps, first name + age, session
+// id, and the (fixed) interview + parent-report states. ABUSE and EXPLOITATION carry
+// a do-not-contact-parent banner; THREAT carries a supervisor-escalation banner. The
+// redaction rules per the Safety SOP are absolute, not discretionary.
 function buildSafetyEmail(flag, info) {
+  const meta = SAFETY_META[flag] || { severity: 'high', label: flag, resources: '988, 911', doNotContactParent: false, supervisor: false };
   const name = escHtml(info.teen_first_name || 'a teen');
   const age = escHtml(info.teen_age);
-  const subject = `⚠️ OTS Money & Momentum Map — ${flag} flag — ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
+  const eventId = info.event_id || '—';
+  const createdAt = info.created_at || new Date().toISOString();
+  const subject = `[OTS SAFETY] ${meta.label} | Event ${eventId} | ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
+  const bannerColor = (meta.doNotContactParent || meta.supervisor) ? '#7a1f1f' : '#8a4b00';
   let h = '';
-  h += `<div style="background:${flag === 'ABUSE' ? '#7a1f1f' : '#8a4b00'};color:#fff;padding:12px 16px;border-radius:10px 10px 0 0;font-weight:700;font-size:16px">Safety flag: ${escHtml(flag)}</div>`;
+  h += `<div style="background:${bannerColor};color:#fff;padding:12px 16px;border-radius:10px 10px 0 0;font-weight:700;font-size:16px">Safety alert: ${escHtml(meta.label)} · severity ${escHtml(meta.severity)}</div>`;
   h += `<div style="border:1px solid #e2e2e2;border-top:none;border-radius:0 0 10px 10px;padding:16px">`;
-  h += `<p>A teen using the Money & Momentum Map just triggered a <b>${escHtml(flag)}</b> safety flag.</p>`;
-  if (flag === 'ABUSE') {
-    h += `<p style="background:#fdecec;border:1px solid #f5b5b5;color:#7a1f1f;padding:11px 14px;border-radius:8px;font-weight:600">⚠️ Do NOT contact the parent. The parent who set this up may be the concern. Follow the ABUSE branch of the SOP.</p>`;
+  h += `<p>A teen using the Money &amp; Momentum Map just triggered a <b>${escHtml(meta.label)}</b> safety event.</p>`;
+  if (meta.doNotContactParent) {
+    h += `<p style="background:#fdecec;border:1px solid #f5b5b5;color:#7a1f1f;padding:11px 14px;border-radius:8px;font-weight:600">⚠️ Do NOT contact the parent. The parent who set this up may be the concern. Follow the ${escHtml(meta.label)} branch of the SOP.</p>`;
+  } else if (meta.supervisor) {
+    h += `<p style="background:#fdecec;border:1px solid #f5b5b5;color:#7a1f1f;padding:11px 14px;border-radius:8px;font-weight:600">⚠️ Escalate to a supervisor immediately. Parent contact and any emergency-services decision are case-specific — follow the THREAT_TO_OTHERS branch of the SOP.</p>`;
   }
+  const row = (k, v) => `<tr><td style="color:#777;padding:3px 14px 3px 0;vertical-align:top">${k}</td><td>${v}</td></tr>`;
   h += `<table style="border-collapse:collapse;margin:12px 0;font-size:14px"><tbody>`;
-  h += `<tr><td style="color:#777;padding:3px 14px 3px 0">Teen</td><td><b>${name}</b>, age ${age}</td></tr>`;
-  h += `<tr><td style="color:#777;padding:3px 14px 3px 0">Session</td><td>${escHtml(info.sid)}</td></tr>`;
-  h += `<tr><td style="color:#777;padding:3px 14px 3px 0">Detected</td><td>${escHtml(new Date().toISOString())}</td></tr>`;
+  h += row('Event ID', `<b>${escHtml(eventId)}</b>`);
+  h += row('Flag', escHtml(meta.label));
+  h += row('Severity', escHtml(meta.severity));
+  h += row('Created at', escHtml(createdAt));
+  h += row('Teen', `<b>${name}</b>, age ${age}`);
+  h += row('Session', escHtml(info.sid));
+  h += row('Interview state', 'halted');
+  h += row('Parent report state', '<b>blocked</b>');
+  h += row('Resources shown in app', escHtml(meta.resources));
   h += `</tbody></table>`;
-  h += `<p style="color:#555;font-size:13px">This alert contains <b>no quotes</b> from the teen, by policy. The teen has already been shown crisis resources (988/911) in the conversation, and no report will go to the parent for this session.</p>`;
-  h += `<p style="font-weight:600;margin:14px 0 4px">What to do now</p>`;
-  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Money & Momentum Map Safety SOP. OTS's role is to connect the teen to real help, not to counsel. Never forward this to the parent.</p>`;
-  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Money & Momentum Map safety routing</p>`;
+  h += `<p style="color:#555;font-size:13px">This alert contains <b>no quotes and no transcript</b> from the teen, by policy. The teen has already been shown the resources above in the conversation, and no report will go to the parent for this session.</p>`;
+  h += `<p style="font-weight:600;margin:14px 0 4px">Responder instructions</p>`;
+  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Money &amp; Momentum Map Safety SOP for <b>${escHtml(meta.label)}</b>. Do not use teen quotes. Do not counsel the teen through the app. ${meta.doNotContactParent ? 'Do not contact the parent.' : 'Do not contact the parent unless current written policy permits.'} OTS's role is to connect the teen to real help, not to intervene clinically.</p>`;
+  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Money &amp; Momentum Map safety routing · Event ${escHtml(eventId)}</p>`;
   h += `</div>`;
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.5;font-size:15px">${h}</div>`;
-  return { subject, html };
+  const instructions = meta.doNotContactParent
+    ? `Do NOT contact the parent. Do not use teen quotes. Follow the ${meta.label} branch of the SOP.`
+    : meta.supervisor
+      ? `Escalate to a supervisor immediately. Parent contact / emergency-services decision is case-specific. Do not use teen quotes.`
+      : `Do not use teen quotes. Do not contact parent unless current policy permits.`;
+  const text = [
+    `[OTS SAFETY] ${meta.label}`, ``,
+    `Event ID: ${eventId}`,
+    `Flag: ${meta.label}`,
+    `Severity: ${meta.severity}`,
+    `Created at: ${createdAt}`,
+    `Teen first name: ${info.teen_first_name || 'a teen'}`,
+    `Teen age: ${info.teen_age}`,
+    `Session ID: ${info.sid}`,
+    `Interview state: halted`,
+    `Parent report state: blocked`,
+    `Resources shown in app: ${meta.resources}`,
+    `Responder instructions: ${instructions}`
+  ].join('\n');
+  return { subject, html, text };
 }
 
 async function fireSafetyAlert(flag, info) {
@@ -1200,20 +1248,25 @@ async function fireSafetyAlert(flag, info) {
   alertedEvents.add(key);
   if (alertedEvents.size > 10000) alertedEvents.clear(); // bound memory
 
-  console.warn('[SAFETY_EVENT]', flag, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
+  const eventId = crypto.randomBytes(3).toString('hex'); // short, non-guessable audit id
+  const createdAt = new Date().toISOString();
+  console.warn('[SAFETY_EVENT]', flag, '| event=' + eventId, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
 
   if (!SAFETY_EMAIL_FLAGS.has(flag)) return; // SUPPORT/DISTRESS: recorded, not emailed
   if (!safetyMailer) {
-    console.error('Safety email not configured (EMAIL_USER/EMAIL_PASS) — a', flag, 'alert was NOT delivered.');
+    console.error('Safety email not configured (EMAIL_USER/EMAIL_PASS) — a', flag, 'alert was NOT delivered. event=' + eventId);
     return;
   }
-  const email = buildSafetyEmail(flag, info);
+  const email = buildSafetyEmail(flag, Object.assign({ event_id: eventId, created_at: createdAt }, info));
   const to = process.env.SAFETY_ALERT_TO || process.env.EMAIL_USER;
+  const cc = process.env.SAFETY_ALERT_BACKUP_TO || '';   // backup responder coverage
   try {
-    await safetyMailer.sendMail({ from: process.env.EMAIL_USER, to, subject: email.subject, html: email.html });
-    console.warn('[SAFETY_ALERT_SENT]', flag, '→', to, '| sid=' + info.sid);
+    const msg = { from: process.env.EMAIL_USER, to, subject: email.subject, html: email.html, text: email.text };
+    if (cc) msg.cc = cc;
+    await safetyMailer.sendMail(msg);
+    console.warn('[SAFETY_ALERT_SENT]', flag, '| event=' + eventId, '→', to + (cc ? ' (cc ' + cc + ')' : ''), '| sid=' + info.sid);
   } catch (err) {
-    console.error('Safety email send error:', err.message);
+    console.error('Safety email send error:', err.message, '| event=' + eventId);
   }
 }
 
@@ -1318,6 +1371,10 @@ app.get('/api/health', (req, res) => {
   if (mode === 'production') {
     configured.safety_review_approved = process.env.SAFETY_REVIEW_APPROVED === 'true';
     configured.archive_disabled = !process.env.ARCHIVE_EMAIL_TO;
+    // A designated responder AND a backup must be configured before production —
+    // the SOP requires timed acknowledgement with backup coverage (fail closed).
+    configured.safety_responder = !!(process.env.SAFETY_ALERT_TO || process.env.EMAIL_USER);
+    configured.safety_backup_responder = !!process.env.SAFETY_ALERT_BACKUP_TO;
   }
   const missing = Object.keys(configured).filter(k => !configured[k]);
   // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready in beta.
@@ -1353,5 +1410,6 @@ module.exports = {
   parseScoringJSON, phaseFor, interviewQuestionNum,
   computeScoreMetadata, stageForTotal,
   signPaidPass, verifyPaidPass, sessionEntitles,
-  QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker
+  QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker,
+  buildSafetyEmail, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE
 };

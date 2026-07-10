@@ -278,6 +278,40 @@ test('buildParentEmail: no Handshake when nothing was approved for it', () => {
   ok(!email.html.includes('A Family Handshake'), 'no handshake when pa1/cq1/sr1 all absent');
 });
 
+// ───────────── safety taxonomy + enriched responder alert (SOP review) ─────────────
+test('SAFETY taxonomy: sentinel + flag sets cover CRISIS/ABUSE/EXPLOITATION/THREAT/SUPPORT', () => {
+  ['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT', 'SUPPORT'].forEach(f =>
+    ok(srv.SAFETY_SENTINEL_RE.test('x [SAFETY_EVENT:' + f + '] y'), f + ' sentinel matches'));
+  ['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT'].forEach(f => {
+    ok(srv.SAFETY_EMAIL_FLAGS.has(f), f + ' emails a responder');
+    ok(srv.SAFETY_BLOCK_FLAGS.has(f), f + ' blocks the parent report');
+  });
+  ['SUPPORT', 'DISTRESS'].forEach(f => {
+    ok(srv.SAFETY_FLAGS.has(f), f + ' is a known flag');
+    ok(!srv.SAFETY_EMAIL_FLAGS.has(f), f + ' does NOT page a responder (no alert fatigue)');
+    ok(!srv.SAFETY_BLOCK_FLAGS.has(f), f + ' does NOT block the report');
+  });
+});
+test('buildSafetyEmail: EXPLOITATION — sextortion class, do-not-contact, removal resources, enriched payload', () => {
+  const e = srv.buildSafetyEmail('EXPLOITATION', { teen_first_name: 'Avi', teen_age: 16, sid: 'sess_x', event_id: 'ab12cd', created_at: '2026-07-09T20:14:33Z' });
+  ok(/EXPLOITATION_SEXTORTION/.test(e.subject), 'granular class in subject');
+  ok(/Event ab12cd/.test(e.subject), 'event id in subject');
+  ok(/The parent who set this up may be the concern/i.test(e.html), 'do-not-contact banner');
+  ok(/takeitdown\.ncmec\.org/i.test(e.html) && /CyberTipline/i.test(e.html), 'image-removal + reporting resources');
+  ok(e.text.includes('Severity: high') && e.text.includes('Interview state: halted') && e.text.includes('Parent report state: blocked'), 'text payload carries severity + states');
+});
+test('buildSafetyEmail: THREAT — threat-to-others class, supervisor escalation (not abuse banner)', () => {
+  const e = srv.buildSafetyEmail('THREAT', { teen_first_name: 'Sam', teen_age: 15, sid: 'sess_y', event_id: 'ff00aa' });
+  ok(/CRISIS_THREAT_TO_OTHERS/.test(e.subject), 'threat-to-others class in subject');
+  ok(/Escalate to a supervisor/i.test(e.html), 'supervisor escalation banner');
+  ok(!/The parent who set this up may be the concern/i.test(e.html), 'not the abuse do-not-contact banner');
+});
+test('buildSafetyEmail: redaction — no teen disclosure/transcript field ever leaks into the alert', () => {
+  const e = srv.buildSafetyEmail('CRISIS', { teen_first_name: 'Kai', teen_age: 15, sid: 's', event_id: 'e', disclosure: 'SECRET_TEEN_WORDS', transcript: 'SECRET_TEEN_WORDS' });
+  ok(!/SECRET_TEEN_WORDS/.test(e.html) && !/SECRET_TEEN_WORDS/.test(e.text), 'no quotes/transcript in the alert');
+  ok(/CRISIS_SELF_HARM/.test(e.subject), 'self-harm gets its own granular class');
+});
+
 (async () => {
   for (const t of queue) {
     try { await t.fn(); console.log('  ✓ ' + t.name); pass++; }
