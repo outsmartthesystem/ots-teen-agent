@@ -34,6 +34,12 @@ webhook** and no no-code dependency. By policy the alert contains **no quotes an
 transcript** — only the class, an event ID, severity, timestamps, first name, age,
 session id, and the fixed interview/parent-report states (see **§5**).
 
+**Fail-closed on ambiguity.** If the post-interview scorer signals a concern
+(`safety_check.clear === false`) but the specific flag is missing or unrecognized,
+the server treats it as a **blocking CRISIS**, not a non-blocking DISTRESS — an
+ambiguous or garbled classification can never let a flagged transcript reach the
+parent.
+
 ## 2. Event taxonomy
 
 Reconciled with the audit's recommended classes. The four serious classes all

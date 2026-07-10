@@ -827,7 +827,7 @@ app.post('/api/score', async (req, res) => {
     }
     if (!parsed) return res.status(502).json({ error: 'could not produce a valid result' });
     if (parsed.safety_check && parsed.safety_check.clear === false) {
-      const flag = String(parsed.safety_check.flag || 'DISTRESS').toUpperCase();
+      const flag = scoringSafetyFlag(parsed.safety_check);
       if (SAFETY_BLOCK_FLAGS.has(flag)) await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag });
       fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
       return res.json({ safety: flag });
@@ -879,7 +879,7 @@ app.post('/api/score/refine', async (req, res) => {
     }
     if (!parsed) return res.status(502).json({ error: 'could not refine' });
     if (parsed.safety_check && parsed.safety_check.clear === false) {
-      const flag = String(parsed.safety_check.flag || 'DISTRESS').toUpperCase();
+      const flag = scoringSafetyFlag(parsed.safety_check);
       if (SAFETY_BLOCK_FLAGS.has(flag)) await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag });
       fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
       return res.json({ safety: flag });
@@ -914,7 +914,7 @@ app.post('/api/skills-score', async (req, res) => {
     const parsed = parseScoringJSON(text);
     if (!parsed) return res.status(502).json({ error: 'could not parse skills result' });
     if (parsed.safety_check && parsed.safety_check.clear === false) {
-      const flag = String(parsed.safety_check.flag || 'DISTRESS').toUpperCase();
+      const flag = scoringSafetyFlag(parsed.safety_check);
       if (SAFETY_BLOCK_FLAGS.has(flag)) await db.updateSession(session.id, { safety_blocked: true, safety_flag: flag });
       fireSafetyAlert(flag, { sid: session.id, teen_first_name: session.teen_first_name, teen_age: session.teen_age });
       return res.json({ safety: flag });
@@ -1161,6 +1161,16 @@ app.post('/api/parent-report', async (req, res) => {
 const SAFETY_FLAGS = new Set(['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT', 'SUPPORT', 'DISTRESS']);
 const SAFETY_EMAIL_FLAGS = new Set(['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT']);
 const SAFETY_BLOCK_FLAGS = new Set(['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT']); // these block any parent report
+
+// Resolve the flag from a scorer's `safety_check` (Prompt B/D). A clear:false
+// result with a MISSING or unrecognized flag fails CLOSED — treated as a blocking
+// CRISIS, not a non-blocking DISTRESS — so an ambiguous/garbled scorer output can
+// never let a flagged transcript reach the parent. An explicit, recognized flag
+// (incl. DISTRESS) is honored as-is.
+function scoringSafetyFlag(safety_check) {
+  const flag = String((safety_check && safety_check.flag) || '').toUpperCase();
+  return SAFETY_FLAGS.has(flag) ? flag : 'CRISIS';
+}
 const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}` (alert dedup only)
 // The durable parent-report block now lives in the session row (safety_blocked),
 // set by the callers below — not an in-memory set.
@@ -1411,5 +1421,5 @@ module.exports = {
   computeScoreMetadata, stageForTotal,
   signPaidPass, verifyPaidPass, sessionEntitles,
   QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker,
-  buildSafetyEmail, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE
+  buildSafetyEmail, scoringSafetyFlag, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE
 };

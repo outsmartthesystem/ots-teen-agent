@@ -312,6 +312,15 @@ test('buildSafetyEmail: redaction — no teen disclosure/transcript field ever l
   ok(/CRISIS_SELF_HARM/.test(e.subject), 'self-harm gets its own granular class');
 });
 
+test('scoringSafetyFlag: recognized flags honored; missing/garbled fails CLOSED to CRISIS', () => {
+  eq(srv.scoringSafetyFlag({ clear: false, flag: 'EXPLOITATION' }), 'EXPLOITATION', 'explicit serious flag honored');
+  eq(srv.scoringSafetyFlag({ clear: false, flag: 'distress' }), 'DISTRESS', 'recognized non-blocking flag preserved (case-insensitive)');
+  eq(srv.scoringSafetyFlag({ clear: false, flag: null }), 'CRISIS', 'missing flag -> CRISIS (fail closed, blocks report)');
+  eq(srv.scoringSafetyFlag({ clear: false, flag: 'weird_thing' }), 'CRISIS', 'unrecognized flag -> CRISIS (fail closed)');
+  eq(srv.scoringSafetyFlag({}), 'CRISIS', 'absent flag -> CRISIS');
+  ok(srv.SAFETY_BLOCK_FLAGS.has(srv.scoringSafetyFlag({ flag: 'garbage' })), 'the fail-closed default actually blocks the report');
+});
+
 (async () => {
   for (const t of queue) {
     try { await t.fn(); console.log('  ✓ ' + t.name); pass++; }
