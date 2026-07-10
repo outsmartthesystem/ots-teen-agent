@@ -39,6 +39,10 @@
     .form-error { color: var(--danger); font-size: 14px; margin-top: 14px; text-align: center; display: none; }
     .form-error.show { display: block; }
     .fine { color: var(--muted); font-size: 12px; margin-top: 16px; }
+    .fine a { color: var(--accent-2); }
+    .check { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; color: var(--muted); margin: 20px 0 4px; line-height: 1.45; cursor: pointer; }
+    .check input { width: auto; margin-top: 2px; flex: none; }
+    .field-note { font-size: 12.5px; color: var(--accent-2); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; margin-top: 6px; line-height: 1.45; }
 
     /* Success state */
     .success { display: none; }
@@ -84,15 +88,18 @@
         <label for="teenAge">Their age</label>
         <select id="teenAge">
           <option value="">Select…</option>
-          <option>13</option><option>14</option><option>15</option><option>16</option>
-          <option>17</option><option>18</option><option>19</option><option>20</option>
-          <option>21</option><option>22</option><option>23</option><option>24</option><option>25</option>
+          <option>13</option><option>14</option><option>15</option><option>16</option><option>17</option>
+          <option value="18plus">18 or older</option>
         </select>
-        <div class="field-error" id="teenAgeErr">Please choose an age between 13 and 25.</div>
+        <div class="field-error" id="teenAgeErr">Please choose an age between 13 and 17.</div>
+        <div class="field-note" id="teenAgeAdult" style="display:none">For 18 or older, they’ll start their own <strong>Young Adult Map</strong> — that version is coming soon. This setup is for teens 13–17.</div>
+
+        <label class="check"><input type="checkbox" id="consent"> I understand this is a money-and-momentum snapshot for teens — <strong>not</strong> a crisis service, therapy, or a clinical assessment.</label>
+        <div class="field-error" id="consentErr">Please confirm you understand this before continuing.</div>
 
         <button class="btn" id="submitBtn" type="submit">Create my teen’s link</button>
         <div class="form-error" id="formError"></div>
-        <p class="fine">We use this only to set up the check and deliver the report you approve together.</p>
+        <p class="fine">We use this only to set up the Map and deliver the report you approve together. See our <a href="/privacy.html">Privacy</a>, <a href="/terms.html">Terms</a>, and <a href="/safety.html">Safety</a> pages.</p>
       </form>
 
       <!-- SUCCESS -->

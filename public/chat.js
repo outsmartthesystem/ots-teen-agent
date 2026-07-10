@@ -134,8 +134,57 @@ function showOnboarding() {
       ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
   }
   const btn = document.getElementById('onboardStart');
-  if (btn) btn.onclick = startInterview;
+  if (btn) btn.onclick = showAgeCheck;
   showScreen('onboarding');
+}
+
+// Deterministic age confirmation — the interview can't start until this passes
+// (server-enforced: /api/interview/turn 409s until teen_age_confirmed_at is set).
+// Under-13 (COPPA) and 18+ are routed out server-side and the session is purged.
+function showAgeCheck() {
+  showScreen('agecheck');
+  const valEl = document.getElementById('ageVal');
+  if (valEl) valEl.textContent = String(window.session.teen_age);
+  const yes = document.getElementById('ageYes');
+  const no = document.getElementById('ageNo');
+  const correctBox = document.getElementById('ageCorrect');
+  const input = document.getElementById('ageInput');
+  const save = document.getElementById('ageSave');
+  if (yes) yes.onclick = () => confirmAge(window.session.teen_age);
+  if (no) no.onclick = () => { if (correctBox) correctBox.style.display = 'block'; if (input) { input.value = ''; input.focus(); } };
+  if (save) save.onclick = () => { const v = Number(input.value); if (!Number.isInteger(v)) { input.focus(); return; } confirmAge(v); };
+}
+
+async function confirmAge(age) {
+  try {
+    const r = await fetch('/api/session/confirm-age', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ age: Number(age) })
+    });
+    const j = await r.json();
+    if (j && j.ok) {
+      window.session.teen_age = j.teen_age;
+      window.session.teen_age_plus_3 = j.teen_age + 3;
+      startInterview();
+      return;
+    }
+    // Routed out (under 13 or 18+): the server already purged the session.
+    const block = document.getElementById('ageBlock');
+    const buttons = document.getElementById('ageButtons');
+    const correct = document.getElementById('ageCorrect');
+    if (buttons) buttons.style.display = 'none';
+    if (correct) correct.style.display = 'none';
+    if (block) {
+      block.style.display = 'block';
+      block.textContent = (j && j.reason === 'under_13')
+        ? 'Thanks for being honest. This one’s built for ages 13–17, so we’ll stop here — nothing was saved.'
+        : 'Thanks! Since you’re 18 or older, the teen version isn’t the right fit — a Young Adult Map is coming soon. Nothing was saved.';
+    }
+    window.halted = true;
+  } catch (e) {
+    const block = document.getElementById('ageBlock');
+    if (block) { block.style.display = 'block'; block.textContent = 'Couldn’t confirm just now — check your connection and try again.'; }
+  }
 }
 
 // Rebuild the chat from the server's stored transcript and let the teen continue.
@@ -1467,7 +1516,7 @@ function appendTextWithLineBreaks(parent, text) {
 
 // ─── UI PLUMBING ─────────────────────────────────────────────────────────
 function showScreen(name) {
-  ['loading', 'error', 'resume', 'onboarding', 'chat', 'result', 'preview', 'sent'].forEach(s => {
+  ['loading', 'error', 'resume', 'onboarding', 'agecheck', 'chat', 'result', 'preview', 'sent'].forEach(s => {
     const el = document.getElementById('screen-' + s);
     if (el) el.style.display = (s === name) ? 'flex' : 'none';
   });

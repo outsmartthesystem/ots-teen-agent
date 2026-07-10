@@ -57,6 +57,9 @@
     .onboard-num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
     .onboard-h { font-weight: 600; font-size: 16px; margin-bottom: 3px; }
     .onboard-p { color: var(--muted); font-size: 14.5px; line-height: 1.5; }
+    .onboard-safety { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin: 0 0 16px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+    .age-input { width: 100%; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 16px; font-family: inherit; box-sizing: border-box; }
+    .age-input:focus { outline: none; border-color: var(--accent); }
     .onboard-start { width: 100%; }
     .messages-area { flex: 1; overflow-y: auto; padding: 20px; }
     #messages { display: flex; flex-direction: column; gap: 14px; }
@@ -311,7 +314,27 @@
           <div><div class="onboard-h">About 15 minutes</div><div class="onboard-p">Short, honest answers beat polished ones. There are no right answers. Skip anything, pause anytime.</div></div>
         </div>
       </div>
+      <p class="onboard-safety">If anything you say sounds like you might not be safe, a trained OTS responder may be alerted so someone can help — they don’t see your answers, and nothing about safety goes to your parent.</p>
       <button class="btn btn-primary onboard-start" id="onboardStart" type="button">Let’s go →</button>
+    </div>
+  </div>
+
+  <!-- AGE CONFIRM (deterministic gate before the interview) -->
+  <div class="screen" id="screen-agecheck">
+    <div class="card onboard-card">
+      <div class="pill">Quick check</div>
+      <h1 style="font-size:22px;margin:0 0 6px">One quick thing first</h1>
+      <p class="muted" id="agePrompt">We’ve got you as <b id="ageVal">—</b>. That right?</p>
+      <div class="btn-row" id="ageButtons">
+        <button class="btn btn-primary" id="ageYes" type="button">Yep</button>
+        <button class="btn btn-ghost" id="ageNo" type="button">Not quite</button>
+      </div>
+      <div id="ageCorrect" style="display:none;margin-top:18px">
+        <label for="ageInput" class="muted" style="display:block;font-size:13px;margin-bottom:6px">How old are you?</label>
+        <input id="ageInput" type="number" inputmode="numeric" min="13" max="17" class="age-input">
+        <button class="btn btn-primary" id="ageSave" type="button" style="width:100%;margin-top:12px">That’s right →</button>
+      </div>
+      <p id="ageBlock" class="onboard-p" style="display:none;margin-top:18px"></p>
     </div>
   </div>
 

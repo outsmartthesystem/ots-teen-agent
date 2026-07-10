@@ -191,7 +191,7 @@ const SKILLS_SUB = (s) => SERVER_PROMPTS.C
 // an HttpOnly cookie, and the id is stripped from the URL. The cookie — not a
 // client-held token — authenticates /api/chat and /api/parent-report afterward.
 const SESSION_COOKIE = 'ots_sid';
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * (Number(process.env.SESSION_RETENTION_DAYS) || 30); // default 30 days
 
 function setSessionCookie(req, res, id) {
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
@@ -327,7 +327,7 @@ function teenSafe(s) {
 // Creates an opaque server-side session and returns the teen's link (?s=<id>).
 // The id is unguessable random; the PII lives in the row, not the link.
 app.post('/api/register', async (req, res) => {
-  const { teen_first_name, teen_age, parent_first_name, parent_email } = req.body || {};
+  const { teen_first_name, teen_age, parent_first_name, parent_email, consent } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
   const pEmail = String(parent_email || '').trim();
@@ -336,7 +336,8 @@ app.post('/api/register', async (req, res) => {
   if (tName.length < 1 || tName.length > 40) return res.status(400).json({ error: 'teen_first_name required (1–40 chars)' });
   if (pName.length < 1 || pName.length > 40) return res.status(400).json({ error: 'parent_first_name required (1–40 chars)' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pEmail)) return res.status(400).json({ error: 'valid parent_email required' });
-  if (!Number.isInteger(age) || age < 13 || age > 25) return res.status(400).json({ error: 'age must be an integer 13–25' });
+  if (!Number.isInteger(age) || age < 13 || age > 17) return res.status(400).json({ error: 'age must be an integer 13–17 (18+ needs the Young Adult Map)' });
+  if (consent !== true) return res.status(400).json({ error: 'consent required' });
 
   const id = crypto.randomBytes(24).toString('base64url');
   const inviteToken = crypto.randomBytes(24).toString('base64url'); // one-time LINK secret; the session id is NEVER in the link
@@ -369,6 +370,21 @@ app.post('/api/session/start', async (req, res) => {
   res.json(teenSafe(claimed));
 });
 
+// ─── CONFIRM AGE (deterministic; gate BEFORE the interview) ─────────────────
+// The interview can't start until the teen confirms/corrects their age. Under-13
+// (COPPA) and 18+ (needs the Young Adult Map) are purged and routed out. Age
+// gating is deterministic here — never left to the model.
+app.post('/api/session/confirm-age', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  const age = Number(req.body && req.body.age);
+  if (!Number.isInteger(age) || age < 5 || age > 120) return res.status(400).json({ error: 'a valid age is required' });
+  if (age < 13) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'under_13' }); }
+  if (age > 17) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'adult' }); }
+  await db.updateSession(s.id, { teen_age: age, teen_age_confirmed_at: new Date() });
+  res.json({ ok: true, teen_age: age });
+});
+
 // ─── SESSION (current, via cookie) ─────────────────────────────────────────
 // Used on reload to re-establish state without the link in the URL.
 app.get('/api/session', async (req, res) => {
@@ -387,6 +403,7 @@ app.post('/api/interview/turn', async (req, res) => {
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (session.interview_complete) return res.json({ complete: true, message: '' });
+  if (!session.teen_age_confirmed_at) return res.status(409).json({ error: 'age not confirmed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.A) return res.status(500).json({ error: 'not configured' });
 
   const answer = (req.body && typeof req.body.answer === 'string') ? req.body.answer.trim().slice(0, 4000) : '';
@@ -779,6 +796,16 @@ app.post('/api/share/decline', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── PRIVACY: DELETE MY RESULT ─────────────────────────────────────────────
+// Teen- or parent-initiated hard delete of everything for this session.
+app.post('/api/privacy/delete', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  await db.deleteSession(s.id);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
 app.post('/api/parent-report', async (req, res) => {
   const s = await currentSession(req);
   if (!s) return res.status(401).json({ error: 'no active session' });
@@ -922,7 +949,10 @@ async function fireSafetyAlert(flag, info) {
 // SAFETY CARVE-OUT: a safety-flagged session is NEVER archived. CRISIS/ABUSE
 // disclosures are purged on the device and handled by the (quote-free) safety
 // alert — they must not land verbatim in an archive inbox.
-function archiveEnabled() { return !!(process.env.ARCHIVE_EMAIL_TO && safetyMailer); }
+function archiveEnabled() {
+  if ((process.env.LAUNCH_MODE || 'beta').toLowerCase() === 'production') return false; // never record in production
+  return !!(process.env.ARCHIVE_EMAIL_TO && safetyMailer);
+}
 
 async function sendArchiveEmail(session, kind, transcript, assessment) {
   if (!archiveEnabled()) return;
@@ -1005,9 +1035,16 @@ app.get('/api/health', (req, res) => {
     safety_email: !!safetyMailer,
     durable_db: db.backend() === 'postgres' && db.ready()   // configured AND actually initialized
   };
+  // Production launch gates (go-live hardening): counsel sign-off + archiving OFF.
+  // In beta these are not required; in production they make ready=false until met.
+  const mode = (process.env.LAUNCH_MODE || 'beta').toLowerCase();
+  if (mode === 'production') {
+    configured.safety_review_approved = process.env.SAFETY_REVIEW_APPROVED === 'true';
+    configured.archive_disabled = !process.env.ARCHIVE_EMAIL_TO;
+  }
   const missing = Object.keys(configured).filter(k => !configured[k]);
-  // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready.
-  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
+  // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready in beta.
+  res.json({ ok: true, service: 'ots-teen-agent', mode, ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
 });
 
 // Serve ONLY the public asset directory (whitelist, not a blacklist). Backend
@@ -1026,7 +1063,7 @@ if (require.main === module) {
     .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()}, ready: ${db.ready()})`)));
   // Purge expired session rows daily (getSession already treats them as gone; this
   // reclaims storage). Unref'd so it never keeps the process alive on its own.
-  const sweepExpired = () => db.deleteExpired()
+  const sweepExpired = () => db.deleteExpired(Number(process.env.UNSHARED_RESULT_RETENTION_DAYS) || 7)
     .then(n => { if (n) console.log('[CLEANUP] purged ' + n + ' expired session(s)'); })
     .catch(e => console.warn('[CLEANUP] failed:', e.message));
   setInterval(sweepExpired, 24 * 60 * 60 * 1000).unref();

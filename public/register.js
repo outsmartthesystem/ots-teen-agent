@@ -19,13 +19,20 @@
     const parentName = document.getElementById('parentName').value.trim();
     const parentEmail = document.getElementById('parentEmail').value.trim();
     const teenName = document.getElementById('teenName').value.trim();
-    const teenAge = Number(document.getElementById('teenAge').value);
+    const teenAgeRaw = document.getElementById('teenAge').value;
+    const consent = document.getElementById('consent').checked;
+
+    // 18+ routes out to the (future) Young Adult Map, not the teen flow.
+    const adult = teenAgeRaw === '18plus' || Number(teenAgeRaw) >= 18;
+    document.getElementById('teenAgeAdult').style.display = adult ? 'block' : 'none';
+    const teenAge = Number(teenAgeRaw);
 
     const checks = {
       parentNameErr: !parentName,
       parentEmailErr: !validEmail(parentEmail),
       teenNameErr: !teenName,
-      teenAgeErr: !(teenAge >= 13 && teenAge <= 25)
+      teenAgeErr: adult || !(teenAge >= 13 && teenAge <= 17),
+      consentErr: !consent
     };
     let ok = true;
     Object.keys(checks).forEach(id => { showFieldError(id, checks[id]); if (checks[id]) ok = false; });
@@ -42,7 +49,8 @@
           parent_first_name: parentName,
           parent_email: parentEmail,
           teen_first_name: teenName,
-          teen_age: teenAge
+          teen_age: teenAge,
+          consent: true
         })
       });
       const j = await r.json();

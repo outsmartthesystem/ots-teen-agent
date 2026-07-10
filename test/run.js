@@ -93,6 +93,20 @@ test('db: deleteSession removes the row', async () => {
   await db.deleteSession(id);
   eq(await db.getSession(id), null, 'deleted -> null');
 });
+test('db: deleteExpired purges an unshared finished result past the window', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 6e6 });
+  await db.updateSession(id, { completed_at: new Date(Date.now() - 10 * 864e5) }); // finished 10 days ago, still pending
+  await db.deleteExpired(7);
+  eq(await db.getSession(id), null, 'stale unshared result purged');
+});
+test('db: deleteExpired keeps a recent unshared result', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 6e6 });
+  await db.updateSession(id, { completed_at: new Date() });
+  await db.deleteExpired(7);
+  ok(await db.getSession(id), 'recent unshared result kept');
+});
 
 // ─────────────────────── server helpers ──────────────────────
 test('formatTranscript: labels, seed filtered, separator', () => {
