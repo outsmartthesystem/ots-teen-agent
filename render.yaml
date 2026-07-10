@@ -31,3 +31,11 @@ services:
         sync: false
       - key: GHL_SYNC_WEBHOOK_URL   # optional; CRM sync webhook for Map funnel tags
         sync: false
+      - key: LAUNCH_MODE            # beta (default) | production — gates go-live in /api/health
+        sync: false
+      - key: SAFETY_REVIEW_APPROVED # "true" ONLY after counsel signs off SAFETY-SOP
+        sync: false
+      - key: SESSION_RETENTION_DAYS # session TTL in days (default 30)
+        sync: false
+      - key: UNSHARED_RESULT_RETENTION_DAYS # unshared finished-result purge window (default 7)
+        sync: false

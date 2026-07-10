@@ -38,6 +38,8 @@ window.interviewComplete = false;
 window.skillsComplete = false;
 window.scoringResult = null;
 window.moneyJudgment = null;    // money_judgment from Prompt D, once the skills check runs
+window.decisionLabStatus = null; // 'pending' | 'completed' | 'skipped' — persisted server-side
+window.supportRequest = '';     // the teen's Family Handshake support line
 
 function activeHistory() { return window.mode === 'skills' ? skillsHistory : conversationHistory; }
 
@@ -45,23 +47,27 @@ function activeHistory() { return window.mode === 'skills' ? skillsHistory : con
 document.addEventListener('DOMContentLoaded', boot);
 
 async function boot() {
-  const linkId = new URLSearchParams(location.search).get('s');
+  const params = new URLSearchParams(location.search);
+  const inviteToken = params.get('i');       // new one-time invite token
+  const legacyId = params.get('s');           // legacy session-id link (pre-hardening)
+  const linkId = inviteToken || legacyId;
   let session;
   try {
     if (linkId) {
-      // First open: exchange the opaque link id for an HttpOnly session cookie.
+      // First open: atomically CLAIM the one-time invite and get an HttpOnly cookie
+      // (the session id — which the new link never contained).
       const r = await fetch('/api/session/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ s: linkId })
+        body: JSON.stringify(inviteToken ? { i: inviteToken } : { s: legacyId })
       });
       const j = await r.json();
       if (!r.ok) {
-        return showError(j.error === 'invalid or expired link'
-          ? "This link has expired or isn't valid anymore. Ask for a fresh one."
+        return showError(r.status === 410
+          ? "This private link has already been used. Ask whoever set it up to create a fresh one."
           : (j.error || 'Could not start the session.'));
       }
       session = j;
-      // Strip the id from the URL so it isn't left in the address bar / history.
+      // Strip the token from the URL so it isn't left in the address bar / history.
       history.replaceState(null, '', location.pathname);
       // Fresh start — drop any stale transcript left in this tab by another session.
       clearSession();
@@ -111,6 +117,7 @@ async function recoverResult(session) {
         window.scoringResult = { teen_output: data.teen_output, level: data.level || {}, parent_report_draft: data.parent_report_draft || {} };
         window.moneyJudgment = data.money_judgment || null;
         window.skillsComplete = !!window.moneyJudgment;
+        window.decisionLabStatus = data.decision_lab_status || null;
         window.alreadyShared = !!data.report_sent;
         renderResult(window.scoringResult);
         return;
@@ -130,8 +137,57 @@ function showOnboarding() {
       ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
   }
   const btn = document.getElementById('onboardStart');
-  if (btn) btn.onclick = startInterview;
+  if (btn) btn.onclick = showAgeCheck;
   showScreen('onboarding');
+}
+
+// Deterministic age confirmation — the interview can't start until this passes
+// (server-enforced: /api/interview/turn 409s until teen_age_confirmed_at is set).
+// Under-13 (COPPA) and 18+ are routed out server-side and the session is purged.
+function showAgeCheck() {
+  showScreen('agecheck');
+  const valEl = document.getElementById('ageVal');
+  if (valEl) valEl.textContent = String(window.session.teen_age);
+  const yes = document.getElementById('ageYes');
+  const no = document.getElementById('ageNo');
+  const correctBox = document.getElementById('ageCorrect');
+  const input = document.getElementById('ageInput');
+  const save = document.getElementById('ageSave');
+  if (yes) yes.onclick = () => confirmAge(window.session.teen_age);
+  if (no) no.onclick = () => { if (correctBox) correctBox.style.display = 'block'; if (input) { input.value = ''; input.focus(); } };
+  if (save) save.onclick = () => { const v = Number(input.value); if (!Number.isInteger(v)) { input.focus(); return; } confirmAge(v); };
+}
+
+async function confirmAge(age) {
+  try {
+    const r = await fetch('/api/session/confirm-age', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ age: Number(age) })
+    });
+    const j = await r.json();
+    if (j && j.ok) {
+      window.session.teen_age = j.teen_age;
+      window.session.teen_age_plus_3 = j.teen_age + 3;
+      startInterview();
+      return;
+    }
+    // Routed out (under 13 or 18+): the server already purged the session.
+    const block = document.getElementById('ageBlock');
+    const buttons = document.getElementById('ageButtons');
+    const correct = document.getElementById('ageCorrect');
+    if (buttons) buttons.style.display = 'none';
+    if (correct) correct.style.display = 'none';
+    if (block) {
+      block.style.display = 'block';
+      block.textContent = (j && j.reason === 'under_13')
+        ? 'Thanks for being honest. This one’s built for ages 13–17, so we’ll stop here — nothing was saved.'
+        : 'Thanks! Since you’re 18 or older, the teen version isn’t the right fit — a Young Adult Map is coming soon. Nothing was saved.';
+    }
+    window.halted = true;
+  } catch (e) {
+    const block = document.getElementById('ageBlock');
+    if (block) { block.style.display = 'block'; block.textContent = 'Couldn’t confirm just now — check your connection and try again.'; }
+  }
 }
 
 // Rebuild the chat from the server's stored transcript and let the teen continue.
@@ -475,7 +531,11 @@ function showDecisionLabPrompt() {
   const add = elem('button', 'btn btn-primary dl-add', 'Keep going → 5 quick scenarios');
   add.addEventListener('click', startSkills);
   const skip = elem('button', 'btn btn-ghost dl-skip', 'I’d rather stop here and see my result');
-  skip.addEventListener('click', () => renderResult(window.scoringResult));
+  skip.addEventListener('click', () => {
+    window.decisionLabStatus = 'skipped';
+    try { fetch('/api/skills/skip', { method: 'POST' }).catch(() => {}); } catch (e) {}
+    renderResult(window.scoringResult);
+  });
   box.appendChild(add); box.appendChild(skip);
   root.appendChild(box);
   scrollResultTop();
@@ -528,6 +588,7 @@ function renderResult(parsed) {
 
   // 6) Money decisions (from the optional scenario check), if completed.
   if (window.moneyJudgment) root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
+  else if (window.decisionLabStatus === 'skipped' && !window.alreadyShared) root.appendChild(elem('p', 'confidence-note', 'Money decision skills were skipped — not included in this map. You can still add them below.'));
 
   // 7) High-scorer pathway.
   if (t.high_scorer_pathway) {
@@ -579,7 +640,7 @@ function buildNextSteps() {
     box.appendChild(elem('div', 'ns-status', '✓ You already shared this with ' + parent + '.'));
     const pdfStep = elem('div', 'ns-step');
     pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it as a PDF so you don’t lose it.'));
+    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
     const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
     pdfBtn.addEventListener('click', downloadResultPDF);
     pdfStep.appendChild(pdfBtn);
@@ -602,10 +663,14 @@ function buildNextSteps() {
 
   const pdfStep = elem('div', 'ns-step');
   pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it as a PDF so you don’t lose it.'));
+  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
   const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
   pdfBtn.addEventListener('click', downloadResultPDF);
   pdfStep.appendChild(pdfBtn);
+  const cardBtn = elem('button', 'btn btn-ghost ns-btn', '⤓  Save a shareable card');
+  cardBtn.style.marginTop = '8px';
+  cardBtn.addEventListener('click', downloadShareCard);
+  pdfStep.appendChild(cardBtn);
   box.appendChild(pdfStep);
 
   if (window.blockParentReport) {
@@ -630,8 +695,14 @@ function buildNextSteps() {
 async function keepPrivate() {
   const parent = window.session.parent_first_name;
   if (!confirm('Keep this just for you? Nothing will be sent to ' + parent + '.')) return;
+  declineShare();
+}
+
+// Durable "private" decision: tell the server to block any future send and purge
+// the draft/transcript, then confirm. Used by the result screen AND the preview.
+async function declineShare() {
   clearSession();
-  try { await fetch('/api/session/end', { method: 'POST' }); } catch (e) {}
+  try { await fetch('/api/share/decline', { method: 'POST' }); } catch (e) {}
   renderSent(false);
 }
 
@@ -863,9 +934,41 @@ function showPreview() {
   if (draft.growth_horizon) items.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null, shared: true });
   if (draft.confidence_summary) items.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null, shared: true });
   if (draft.program_fit && draft.program_fit.text) items.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null, shared: true });
+  if (draft.parent_action) items.push({ id: 'pa1', category: 'parent_action', text: draft.parent_action, evidence_quote: null, shared: true });
+  if (draft.conversation_starter) items.push({ id: 'cq1', category: 'conversation_starter', text: draft.conversation_starter, evidence_quote: null, shared: true });
   window.previewItems = items;
   showScreen('preview');
-  renderPreview(draft);
+  showHandshakeStep(draft); // first-class Family Handshake step, then the line-by-line preview
+}
+
+// ─── FAMILY HANDSHAKE (first-class step before the item preview) ──────────
+const HANDSHAKE_CHIPS = ['Ask before giving advice', 'Let me try first', 'Help me find resources', 'Check in once', 'Don’t make it a lecture'];
+function showHandshakeStep(draft) {
+  const root = document.getElementById('previewBody');
+  root.innerHTML = '';
+  const parent = window.session.parent_first_name;
+  root.appendChild(elem('h1', 'pv-h1', 'The Family Handshake'));
+  root.appendChild(elem('p', 'pv-intro', 'Before you choose what to share — how do you want ' + parent + ' to help with this, without taking it over? Tap what fits, add your own, or skip.'));
+  const chipsRow = elem('div', 'hs-chips');
+  const ta = document.createElement('textarea');
+  ta.id = 'hsSupport'; ta.className = 'pv-support-input'; ta.rows = 3;
+  ta.placeholder = 'e.g. “ask before stepping in,” “let me try first,” “help me set up the account”…';
+  if (window.supportRequest) ta.value = window.supportRequest;
+  HANDSHAKE_CHIPS.forEach(label => {
+    const b = elem('button', 'quick-chip', label); b.type = 'button';
+    b.addEventListener('click', () => {
+      const cur = ta.value.trim().replace(/[.\s]+$/, '');
+      ta.value = cur ? (cur + '. ' + label) : label;
+    });
+    chipsRow.appendChild(b);
+  });
+  root.appendChild(chipsRow);
+  root.appendChild(ta);
+  const next = elem('button', 'btn btn-primary pv-send', 'Next: choose what ' + parent + ' sees →');
+  next.style.marginTop = '16px';
+  next.addEventListener('click', () => { window.supportRequest = ta.value.trim(); renderPreview(draft); });
+  root.appendChild(next);
+  const s = document.getElementById('screen-preview'); if (s) s.scrollTop = 0;
 }
 
 function renderPreview(draft) {
@@ -896,13 +999,14 @@ function renderPreview(draft) {
   const srInput = document.createElement('textarea');
   srInput.id = 'pvSupport'; srInput.className = 'pv-support-input'; srInput.rows = 2;
   srInput.placeholder = 'e.g. “ask before stepping in,” “let me try first,” “help me set up the account”…';
+  if (window.supportRequest) srInput.value = window.supportRequest;
   sr.appendChild(srInput);
   root.appendChild(sr);
 
   const send = elem('button', 'btn btn-primary pv-send', 'Send to ' + parent);
   send.addEventListener('click', sendParentReport);
   const skip = elem('button', 'btn btn-ghost pv-skip', 'Don’t send anything');
-  skip.addEventListener('click', () => renderSent(false));
+  skip.addEventListener('click', declineShare);
   const row = elem('div', 'pv-send-row');
   row.appendChild(send); row.appendChild(skip);
   root.appendChild(row);
@@ -989,7 +1093,9 @@ function categoryLabel(cat) {
     money_judgment: 'Money decision skills',
     growth_horizon: 'Where you are → where you could be',
     confidence: 'How solid this read is',
-    program_fit: 'How OTS could help'
+    program_fit: 'How OTS could help',
+    parent_action: 'Your parent’s move this week',
+    conversation_starter: 'A question they can ask'
   })[cat] || 'Shared';
 }
 
@@ -1245,7 +1351,10 @@ function buildResultPdfDoc() {
   // One System Map station: a dot marker + label + text (no raw numbers).
   function station(label, text, accent) {
     if (!text) return;
-    ensureSpace(15);
+    // Keep the label with its text — never orphan a label at a page bottom.
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+    const stLines = doc.splitTextToSize(String(text), W - 8);
+    ensureSpace(6 + stLines.length * 11 * PT * 1.16 + 5);
     doc.setDrawColor(accent[0], accent[1], accent[2]); doc.setLineWidth(0.5);
     doc.setFillColor(255, 255, 255); doc.circle(L + 2, y - 1.2, 1.9, 'FD');
     block(label, { size: 8.5, bold: true, color: [138, 147, 166], x: L + 8, width: W - 8, after: 1.5 });
@@ -1312,6 +1421,47 @@ function buildResultPdfDoc() {
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   doc.text('Outsmart the System  ·  outsmartthesystem.org  ·  ' + date, L, 291);
   return doc;
+}
+
+// ─── SHAREABLE CARD (teen-safe: name + goal + move + brand; no scores/quotes) ──
+// A social-friendly PNG the teen can share and OTS can screenshot for marketing —
+// deliberately excludes scores, evidence quotes, family/money-amount content.
+function downloadShareCard() {
+  const t = (window.scoringResult && window.scoringResult.teen_output) || {};
+  const W = 1080, H = 1350;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0c0f14'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#2f6df0'; g.fillRect(0, 0, W, 12);
+  g.textBaseline = 'top';
+  const wrap = (text, x, y, maxW, lh, font, color) => {
+    g.font = font; g.fillStyle = color;
+    const words = String(text || '').split(/\s+/); let line = ''; let yy = y;
+    words.forEach(w => {
+      const test = line ? line + ' ' + w : w;
+      if (g.measureText(test).width > maxW && line) { g.fillText(line, x, yy); line = w; yy += lh; }
+      else line = test;
+    });
+    if (line) g.fillText(line, x, yy);
+    return yy + lh;
+  };
+  const SANS = '-apple-system, Segoe UI, Roboto, sans-serif';
+  g.font = '600 34px ' + SANS; g.fillStyle = '#6fb3ff'; g.fillText('YOUR SYSTEM MAP', 90, 150);
+  let y = wrap((window.session.teen_first_name || 'Your') + '’s map is ready', 90, 205, W - 180, 82, '700 70px ' + SANS, '#e8eaed') + 60;
+  if (t.goal_reflected) {
+    g.font = '600 28px ' + SANS; g.fillStyle = '#8a93a6'; g.fillText('NORTH STAR', 90, y); y += 46;
+    y = wrap(t.goal_reflected, 90, y, W - 180, 52, '400 40px ' + SANS, '#e8eaed') + 50;
+  }
+  if (t.seven_day_move) {
+    g.font = '600 28px ' + SANS; g.fillStyle = '#8a93a6'; g.fillText('THIS WEEK’S MOVE', 90, y); y += 46;
+    wrap(t.seven_day_move, 90, y, W - 180, 52, '400 40px ' + SANS, '#6fd3a0');
+  }
+  g.font = '500 30px ' + SANS; g.fillStyle = '#8a93a6'; g.fillText('Powered by Outsmart the System', 90, H - 96);
+  try {
+    const a = document.createElement('a');
+    const safeName = (window.session.teen_first_name || 'result').replace(/[^a-z0-9]/gi, '') || 'result';
+    a.href = c.toDataURL('image/png'); a.download = 'OTS-System-Map-' + safeName + '.png'; a.click();
+  } catch (e) { console.error('share card error:', e); }
 }
 
 // ─── TRANSCRIPT (for scoring) ────────────────────────────────────────────
@@ -1453,7 +1603,7 @@ function appendTextWithLineBreaks(parent, text) {
 
 // ─── UI PLUMBING ─────────────────────────────────────────────────────────
 function showScreen(name) {
-  ['loading', 'error', 'resume', 'onboarding', 'chat', 'result', 'preview', 'sent'].forEach(s => {
+  ['loading', 'error', 'resume', 'onboarding', 'agecheck', 'chat', 'result', 'preview', 'sent'].forEach(s => {
     const el = document.getElementById('screen-' + s);
     if (el) el.style.display = (s === name) ? 'flex' : 'none';
   });

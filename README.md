@@ -61,6 +61,17 @@ responder) **is built and live-verified**. The remaining launch gate is the
 `[NEEDS COUNSEL]` policy in `docs/SAFETY-SOP.md`, plus the audit's P0 rearchitecture
 (opaque server-side sessions). See **Roadmap** below.
 
+**Go-live hardening (2026-07-06).** One-time invite links (the link carries a token, not
+the session id — a used link can never re-open the result, closing the hole where a
+parent holding the link could view a result the teen kept private); durable
+"keep private"/decline; every personalized parent-facing item is teen-approved; a 13–17
+flow with a deterministic pre-chat age confirmation (under-13/18+ purge and route out);
+`LAUNCH_MODE=production` makes `/api/health` report `ready:false` until
+`SAFETY_REVIEW_APPROVED=true` and archiving is off; retention windows + a
+`POST /api/privacy/delete`; server-recomputed level/bars/stage; HTTP integration tests +
+CI. (Deterministic server-owned question sequencing — audit D1 — is a deliberate,
+separately-tested follow-up, not yet shipped.)
+
 Prompts are the single source of truth in `prompts/*.md`; `node build-prompts.js`
 regenerates `prompts.js`, which the **server** loads. Phase 4: the prompts are no
 longer sent to the browser, and `/prompts.js` + `/prompts/` are not served over HTTP.
@@ -94,16 +105,19 @@ scored draft live in the session row **server-side**; the browser holds nothing 
 
 | Endpoint | Who | Purpose |
 |---|---|---|
-| `POST /api/register` | parent | validate → create session → return `{ teen_url }` (opaque `?s=` link) |
-| `POST /api/session/start` | teen (first open) | exchange the `?s=` id for the HttpOnly cookie → teen-safe fields |
+| `POST /api/register` | parent | validate (13–17 + consent) → create session → return `{ teen_url }` (one-time `?i=` invite token) |
+| `POST /api/session/start` | teen (first open) | atomically CLAIM the one-time invite → HttpOnly cookie (session id, never in the link) → teen-safe fields |
+| `POST /api/session/confirm-age` | teen | deterministic age confirm/correct; under-13 + 18+ purge & route out; gates the interview |
 | `GET /api/session` | teen (reload) | re-establish teen-safe fields from the cookie |
 | `POST /api/interview/turn` | teen | one interview turn — sends only `{ answer }`; server owns Prompt A + the transcript + the per-turn anchor |
 | `POST /api/skills/turn` | teen | one money-decision-scenario turn (Prompt C) |
 | `GET /api/interview/state` | teen (resume) | the stored transcript, to rebuild the chat on reload |
 | `POST /api/score` · `/api/skills-score` | teen | server scores its **own** completed stored transcript (no client transcript) |
-| `POST /api/parent-report` | teen (after veto) | build the email from the stored draft + the teen's selections; one-time + atomic |
+| `POST /api/parent-report` | teen (after veto) | build the email from the stored draft + the teen's selections; one-time + atomic; refused once declined/sent |
+| `POST /api/share/decline` | teen | durable "keep private": block any future send, purge draft + transcript |
+| `POST /api/privacy/delete` | teen/parent | hard-delete everything for this session |
 | `POST /api/session/end` | teen | clear the cookie + purge the transcript ("End & clear this device") |
-| `GET /api/health` | ops | liveness + readiness (`ready`, `db`, `durable_db`, `archive_recording`) |
+| `GET /api/health` | ops | liveness + readiness (`mode`, `ready`, `db`, `durable_db`, launch/archive gates) |
 
 There is **no** `/api/chat` proxy and **no** client-held token — both were removed in
 Phase 4. `/api/session` returns only `teen_first_name`, `teen_age`, `teen_age_plus_3`

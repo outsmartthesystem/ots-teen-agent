@@ -46,6 +46,68 @@ test('db: updateSession persists report_draft (only allowed fields)', async () =
   eq(row.parent_email, 'p@x.com', 'disallowed field (parent_email) not overwritten');
 });
 
+// ─── go-live hardening: invite / sharing / refine / delete ───────────────
+test('db: one-time invite claim by token hash', async () => {
+  const id = nid(); const hash = 'hash_' + id;
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000, invite_token_hash: hash });
+  const c1 = await db.claimInvite({ tokenHash: hash });
+  ok(c1 && c1.id === id, 'first claim returns the session row');
+  eq(await db.claimInvite({ tokenHash: hash }), null, 'second claim by token fails (one-time)');
+});
+test('db: one-time invite claim by legacy session id', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  const c1 = await db.claimInvite({ sessionId: id });
+  ok(c1 && c1.id === id, 'legacy first claim works');
+  eq(await db.claimInvite({ sessionId: id }), null, 'legacy second claim fails (one-time)');
+});
+test('db: expired invite cannot be claimed', async () => {
+  const id = nid(); const hash = 'h_' + id;
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() - 1000, invite_token_hash: hash });
+  eq(await db.claimInvite({ tokenHash: hash }), null, 'expired -> null');
+});
+test('db: claimReportSend refuses a declined session', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  await db.updateSession(id, { sharing_status: 'declined' });
+  eq(await db.claimReportSend(id), false, 'declined -> no send');
+});
+test('db: claimReportSend marks sharing_status sent, one-time', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  eq(await db.claimReportSend(id), true, 'first send wins');
+  eq(await db.claimReportSend(id), false, 'second send loses (already sent)');
+  const row = await db.getSession(id);
+  eq(row.sharing_status, 'sent', 'status flipped to sent');
+});
+test('db: claimRefine caps refinements at max', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  eq(await db.claimRefine(id, 2), 1, 'first refine -> 1');
+  eq(await db.claimRefine(id, 2), 2, 'second refine -> 2');
+  eq(await db.claimRefine(id, 2), null, 'third refine capped -> null');
+});
+test('db: deleteSession removes the row', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  await db.deleteSession(id);
+  eq(await db.getSession(id), null, 'deleted -> null');
+});
+test('db: deleteExpired purges an unshared finished result past the window', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 6e6 });
+  await db.updateSession(id, { completed_at: new Date(Date.now() - 10 * 864e5) }); // finished 10 days ago, still pending
+  await db.deleteExpired(7);
+  eq(await db.getSession(id), null, 'stale unshared result purged');
+});
+test('db: deleteExpired keeps a recent unshared result', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 6e6 });
+  await db.updateSession(id, { completed_at: new Date() });
+  await db.deleteExpired(7);
+  ok(await db.getSession(id), 'recent unshared result kept');
+});
+
 // ─────────────────────── server helpers ──────────────────────
 test('formatTranscript: labels, seed filtered, separator', () => {
   const turns = [{ role: 'user', content: '__SEED_BEGIN__' }, { role: 'assistant', content: 'Q1' }, { role: 'user', content: 'A1' }];
@@ -82,6 +144,30 @@ test('phaseFor: phase boundaries', () => {
   eq(srv.phaseFor(17), 'Family patterns');
   eq(srv.phaseFor(21), 'The gap');
 });
+test('computeScoreMetadata: 5 dims -> total + stage + canonical bars', () => {
+  const p = { scoring: { vision:{score:4}, awareness:{score:3}, self_regulation:{score:4}, pattern_awareness:{score:3}, agency:{score:4} }, level:{}, profile:{}, teen_output:{ bars:[], stage_display:'' } };
+  srv.computeScoreMetadata(p);
+  eq(p.level.total, 18, 'total = sum of scores');
+  eq(p.level.stage, 'Building', 'stage from band');
+  eq(p.level.show_level, true, 'level shown when all 5 assessed');
+  eq(p.teen_output.stage_display, 'Building', 'stage_display set');
+  eq(p.teen_output.bars.length, 5, 'five bars');
+  eq(p.teen_output.bars[2].dimension, 'Self-Regulation', 'canonical order');
+  eq(p.profile.strongest_dimension, 'Vision', 'strongest = first highest');
+});
+test('computeScoreMetadata: <5 dims hides the level, preserves null bars', () => {
+  const p = { scoring: { vision:{score:4}, awareness:{score:null}, self_regulation:{score:3}, pattern_awareness:{score:null}, agency:{score:4} }, level:{ show_level:true, total:11, stage:'Aware' }, profile:{}, teen_output:{ bars:[], stage_display:'Aware' } };
+  srv.computeScoreMetadata(p);
+  eq(p.level.show_level, false, 'partial level hidden');
+  eq(p.level.total, null, 'no total');
+  eq(p.teen_output.stage_display, '', 'stage_display cleared');
+  eq(p.teen_output.bars[1].score, null, 'null bar preserved');
+});
+test('stageForTotal: band boundaries', () => {
+  eq(srv.stageForTotal(9), 'Waking Up'); eq(srv.stageForTotal(10), 'Aware');
+  eq(srv.stageForTotal(14), 'In Motion'); eq(srv.stageForTotal(18), 'Building');
+  eq(srv.stageForTotal(22), 'Outsmarting');
+});
 test('parseScoringJSON: fenced, plain, garbage', () => {
   eq(srv.parseScoringJSON('```json\n{"a":1}\n```').a, 1, 'fenced');
   eq(srv.parseScoringJSON('noise {"a":2} trailing').a, 2, 'embedded');
@@ -115,24 +201,39 @@ test('buildApprovedItems: top-level fields (gh1) selectable; support_request add
   ok(items.some(i => i.id === 'sr1' && i.category === 'support_request'), 'support added as sr1');
 });
 
+// ───────── pa1/cq1 into the teen veto (go-live hardening TRUST-2) ─────────
+test('buildApprovedItems: pa1/cq1 ride the veto — kept only when included', () => {
+  const draft = { shareable_items: [{ id: 's1', category: 'what_matters', text: 'g', evidence_quote: null }], parent_action: 'do X', conversation_starter: 'ask Y' };
+  const kept = srv.buildApprovedItems(draft, [{ id: 's1', include: true }, { id: 'pa1', include: true }, { id: 'cq1', include: false }], '');
+  ok(kept.some(i => i.id === 'pa1' && i.category === 'parent_action'), 'pa1 kept when included');
+  ok(!kept.some(i => i.id === 'cq1'), 'cq1 excluded when toggled private');
+});
+
 // ───────────────── buildParentEmail (Family Handshake) ─────────────────
-test('buildParentEmail: support pulled into the Handshake, not the item list', () => {
+test('buildParentEmail: Handshake renders sr1/pa1/cq1 from approved items only', () => {
   const report = {
     shareable_items: [
       { id: 's1', category: 'what_matters', text: 'goal', evidence_quote: null },
-      { id: 'sr1', category: 'support_request', text: 'give me options first', evidence_quote: null }
+      { id: 'sr1', category: 'support_request', text: 'give me options first', evidence_quote: null },
+      { id: 'pa1', category: 'parent_action', text: 'walk through one real bill', evidence_quote: null },
+      { id: 'cq1', category: 'conversation_starter', text: 'What money thing are you figuring out?', evidence_quote: null }
     ],
-    fixed_framing: { limitation: 'snapshot' },
-    parent_action: 'ask about pricing',
-    conversation_starter: 'What money thing are you figuring out?'
+    fixed_framing: { limitation: 'snapshot' }
   };
   const email = srv.buildParentEmail(report, 'Sam', 'Jay');
   ok(email.subject && email.html && email.text, 'returns subject/html/text');
   ok(email.html.includes('A Family Handshake'), 'handshake block present');
   ok(email.html.includes('give me options first'), 'support text in handshake');
-  ok(email.html.includes('What money thing are you figuring out?'), 'conversation starter present');
-  // support_request should NOT also appear as a generic labelled item
-  ok(!email.html.includes('How they'), 'support not duplicated as a generic item');
+  ok(email.html.includes('walk through one real bill'), 'parent action in handshake');
+  ok(email.html.includes('What money thing are you figuring out?'), 'conversation starter in handshake');
+  // sr1/pa1/cq1 must NOT also render as generic labelled items — only s1 does.
+  const genericCount = (email.html.match(/border-left:3px solid #2f6df0/g) || []).length;
+  eq(genericCount, 1, 'only the one generic item (what_matters) in the list');
+});
+test('buildParentEmail: no Handshake when nothing was approved for it', () => {
+  const report = { shareable_items: [{ id: 's1', category: 'what_matters', text: 'goal', evidence_quote: null }], fixed_framing: {} };
+  const email = srv.buildParentEmail(report, 'Sam', 'Jay');
+  ok(!email.html.includes('A Family Handshake'), 'no handshake when pa1/cq1/sr1 all absent');
 });
 
 (async () => {

@@ -176,6 +176,59 @@ function stripUnverifiedQuotes(parsed, transcriptText) {
   if (dropped) console.warn('[QUOTE_VERIFY] nulled ' + dropped + ' unverified quote(s)');
 }
 
+// Deterministic scoring metadata (D2): recompute level/total/stage/bars from the
+// per-dimension scores rather than trusting the model's arithmetic. Overwrites the
+// model's level, teen_output.bars, stage_display, and profile.strongest_dimension.
+const DIMS = [
+  { key: 'vision', label: 'Vision' },
+  { key: 'awareness', label: 'Awareness' },
+  { key: 'self_regulation', label: 'Self-Regulation' },
+  { key: 'pattern_awareness', label: 'Pattern Awareness' },
+  { key: 'agency', label: 'Agency' }
+];
+function stageForTotal(total) {
+  if (total >= 22) return 'Outsmarting';
+  if (total >= 18) return 'Building';
+  if (total >= 14) return 'In Motion';
+  if (total >= 10) return 'Aware';
+  return 'Waking Up';
+}
+function computeScoreMetadata(parsed) {
+  if (!parsed || !parsed.scoring || !parsed.teen_output) return parsed;
+  const scoring = parsed.scoring;
+  const scores = DIMS.map(d => (scoring[d.key] && Number.isInteger(scoring[d.key].score)) ? scoring[d.key].score : null);
+  const dimensions_assessed = scores.filter(s => s != null).length;
+  // Rebuild bars in canonical order from the authoritative scores.
+  parsed.teen_output.bars = DIMS.map((d, i) => ({ dimension: d.label, score: scores[i] }));
+  const level = parsed.level || {};
+  level.dimensions_assessed = dimensions_assessed;
+  if (dimensions_assessed === 5) {
+    const total = scores.reduce((a, b) => a + b, 0);
+    level.show_level = true; level.total = total; level.stage = stageForTotal(total); level.reason_if_hidden = null;
+    parsed.teen_output.stage_display = level.stage;
+  } else {
+    // Partial totals under-rate against a five-dimension band — hide the level.
+    level.show_level = false; level.total = null; level.stage = null;
+    level.reason_if_hidden = level.reason_if_hidden || 'Not all five dimensions had enough evidence to show an overall level.';
+    parsed.teen_output.stage_display = '';
+  }
+  parsed.level = level;
+  // Strongest = highest score (deterministic). Keep the model's growth area if it
+  // names a real dimension, else fall back to the lowest-scored.
+  const prof = parsed.profile || {};
+  const labels = DIMS.map(d => d.label);
+  let bestI = -1, bestV = -1;
+  scores.forEach((s, i) => { if (s != null && s > bestV) { bestV = s; bestI = i; } });
+  if (bestI >= 0) prof.strongest_dimension = labels[bestI];
+  if (!prof.primary_growth_area || labels.indexOf(prof.primary_growth_area) === -1) {
+    let worstI = -1, worstV = 99;
+    scores.forEach((s, i) => { if (s != null && s < worstV) { worstV = s; worstI = i; } });
+    if (worstI >= 0) prof.primary_growth_area = labels[worstI];
+  }
+  parsed.profile = prof;
+  return parsed;
+}
+
 const INTERVIEW_SUB = (s) => SERVER_PROMPTS.A
   .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
   .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
@@ -191,7 +244,7 @@ const SKILLS_SUB = (s) => SERVER_PROMPTS.C
 // an HttpOnly cookie, and the id is stripped from the URL. The cookie — not a
 // client-held token — authenticates /api/chat and /api/parent-report afterward.
 const SESSION_COOKIE = 'ots_sid';
-const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * (Number(process.env.SESSION_RETENTION_DAYS) || 30); // default 30 days
 
 function setSessionCookie(req, res, id) {
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
@@ -217,6 +270,9 @@ function sessionIdFromCookie(req) {
 async function currentSession(req) {
   return db.getSession(sessionIdFromCookie(req));
 }
+
+// SHA-256 hex — we store only the HASH of an invite token, never the token itself.
+function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
 
 // Direct mail transport for SAFETY alerts only (not the parent report, which
 // goes via Make). Safety is critical enough that it shouldn't depend on a
@@ -324,7 +380,7 @@ function teenSafe(s) {
 // Creates an opaque server-side session and returns the teen's link (?s=<id>).
 // The id is unguessable random; the PII lives in the row, not the link.
 app.post('/api/register', async (req, res) => {
-  const { teen_first_name, teen_age, parent_first_name, parent_email } = req.body || {};
+  const { teen_first_name, teen_age, parent_first_name, parent_email, consent } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
   const pEmail = String(parent_email || '').trim();
@@ -333,12 +389,14 @@ app.post('/api/register', async (req, res) => {
   if (tName.length < 1 || tName.length > 40) return res.status(400).json({ error: 'teen_first_name required (1–40 chars)' });
   if (pName.length < 1 || pName.length > 40) return res.status(400).json({ error: 'parent_first_name required (1–40 chars)' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pEmail)) return res.status(400).json({ error: 'valid parent_email required' });
-  if (!Number.isInteger(age) || age < 13 || age > 25) return res.status(400).json({ error: 'age must be an integer 13–25' });
+  if (!Number.isInteger(age) || age < 13 || age > 17) return res.status(400).json({ error: 'age must be an integer 13–17 (18+ needs the Young Adult Map)' });
+  if (consent !== true) return res.status(400).json({ error: 'consent required' });
 
   const id = crypto.randomBytes(24).toString('base64url');
+  const inviteToken = crypto.randomBytes(24).toString('base64url'); // one-time LINK secret; the session id is NEVER in the link
   const expires_at = Date.now() + SESSION_TTL_SECONDS * 1000;
   try {
-    await db.createSession({ id, teen_first_name: tName, teen_age: age, parent_first_name: pName, parent_email: pEmail, expires_at });
+    await db.createSession({ id, teen_first_name: tName, teen_age: age, parent_first_name: pName, parent_email: pEmail, expires_at, invite_token_hash: sha256(inviteToken) });
   } catch (e) {
     console.error('register/createSession error:', e.message);
     return res.status(500).json({ error: 'Could not create the session. Try again.' });
@@ -346,17 +404,38 @@ app.post('/api/register', async (req, res) => {
   ga4Event('sess.' + id, 'map_registered', { teen_age: age });
   ghlSync('map_registered', { parent_email: pEmail, parent_first_name: pName, teen_first_name: tName, teen_age: age }, 'map-registered');
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
-  res.json({ teen_url: `${base}/?s=${id}`, expires_at: Math.floor(expires_at / 1000) });
+  res.json({ teen_url: `${base}/?i=${inviteToken}`, expires_at: Math.floor(expires_at / 1000) });
 });
 
 // ─── START (teen opens the link) ───────────────────────────────────────────
 // Exchanges the opaque link id for an HttpOnly session cookie. The client then
 // strips ?s= from the URL; all later calls authenticate by cookie.
 app.post('/api/session/start', async (req, res) => {
-  const s = await db.getSession(req.body && req.body.s);
-  if (!s) return res.status(401).json({ error: 'invalid or expired link' });
-  setSessionCookie(req, res, s.id);
-  res.json(teenSafe(s));
+  // One-time claim: `i` = new invite token; `s` = legacy session-id link (minted
+  // before invite tokens existed). Either way the invite is atomically consumed
+  // and the cookie is set to the session id — which new links never contained.
+  // A used or expired link can never re-open the session (closes the TRUST-0 hole
+  // where the parent, holding the link, could view a result the teen kept private).
+  const b = req.body || {};
+  const claimed = await db.claimInvite(b.i ? { tokenHash: sha256(String(b.i)) } : { sessionId: b.s ? String(b.s) : null });
+  if (!claimed) return res.status(410).json({ error: 'This private link has already been used. Ask for a fresh one if you need it.' });
+  setSessionCookie(req, res, claimed.id);
+  res.json(teenSafe(claimed));
+});
+
+// ─── CONFIRM AGE (deterministic; gate BEFORE the interview) ─────────────────
+// The interview can't start until the teen confirms/corrects their age. Under-13
+// (COPPA) and 18+ (needs the Young Adult Map) are purged and routed out. Age
+// gating is deterministic here — never left to the model.
+app.post('/api/session/confirm-age', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  const age = Number(req.body && req.body.age);
+  if (!Number.isInteger(age) || age < 5 || age > 120) return res.status(400).json({ error: 'a valid age is required' });
+  if (age < 13) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'under_13' }); }
+  if (age > 17) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'adult' }); }
+  await db.updateSession(s.id, { teen_age: age, teen_age_confirmed_at: new Date() });
+  res.json({ ok: true, teen_age: age });
 });
 
 // ─── SESSION (current, via cookie) ─────────────────────────────────────────
@@ -377,6 +456,7 @@ app.post('/api/interview/turn', async (req, res) => {
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
   if (session.interview_complete) return res.json({ complete: true, message: '' });
+  if (!session.teen_age_confirmed_at) return res.status(409).json({ error: 'age not confirmed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.A) return res.status(500).json({ error: 'not configured' });
 
   const answer = (req.body && typeof req.body.answer === 'string') ? req.body.answer.trim().slice(0, 4000) : '';
@@ -490,8 +570,17 @@ app.get('/api/result', async (req, res) => {
     level: r.level || null,
     parent_report_draft: s.report_draft || null,
     money_judgment: r.money_judgment || null,
+    decision_lab_status: s.decision_lab_status || 'pending',
     report_sent: !!s.report_sent
   });
+});
+
+// Mark the Decision Lab explicitly skipped (persisted so recovery shows the note).
+app.post('/api/skills/skip', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  if (s.decision_lab_status === 'pending') await db.updateSession(s.id, { decision_lab_status: 'skipped' });
+  res.json({ ok: true });
 });
 
 // ─── SCORE (Prompt B, server-side) ─────────────────────────────────────────
@@ -507,6 +596,11 @@ app.post('/api/score', async (req, res) => {
   // transcript, and only after the interview actually completed. This blocks a
   // session holder from submitting an arbitrary transcript to scoring (audit P0).
   if (!session.interview_complete) return res.status(409).json({ error: 'interview not complete' });
+  // Idempotent: if we've already scored this session, return the stored result
+  // rather than re-running the (paid) model call. Only /api/score/refine regenerates.
+  if (session.result && (session.result.teen_output || session.result.level)) {
+    return res.json({ result: { safety_check: { clear: true, flag: null }, level: session.result.level || null, teen_output: session.result.teen_output || null, parent_report_draft: session.report_draft || {}, money_judgment: session.result.money_judgment || null } });
+  }
   const storedI = (session.turns && Array.isArray(session.turns.interview)) ? session.turns.interview : null;
   if (!storedI || !storedI.length) return res.status(409).json({ error: 'no interview transcript' });
   const transcript = formatTranscript(storedI, 'TEEN', 'INTERVIEWER');
@@ -527,12 +621,13 @@ app.post('/api/score', async (req, res) => {
       return res.json({ safety: flag });
     }
     stripUnverifiedQuotes(parsed, transcript); // drop any quote not actually in the transcript
+    computeScoreMetadata(parsed); // D2: recompute level/bars/stage from the scores
     // Capture a short goal/interest hint so the optional Decision Lab can personalize a scenario.
     const contextHint = (parsed.teen_output && parsed.teen_output.goal_reflected) ? String(parsed.teen_output.goal_reflected).slice(0, 300) : '';
     const mergedTurns = Object.assign({}, session.turns || {}, { context_hint: contextHint });
     // Store the teen-facing result so a reload can re-render it (recovery).
     const teenResult = { teen_output: parsed.teen_output || null, level: parsed.level || null };
-    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns, result: teenResult });
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns, result: teenResult, completed_at: new Date() });
     sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     ga4Event('sess.' + session.id, 'map_interview_complete', {});
     ga4Event('sess.' + session.id, 'map_result_viewed', { stage: (parsed.level && parsed.level.stage) || '' });
@@ -556,6 +651,9 @@ app.post('/api/score/refine', async (req, res) => {
   if (!storedI || !storedI.length) return res.status(409).json({ error: 'no interview transcript' });
   const correction = (req.body && typeof req.body.correction === 'string') ? req.body.correction.trim().slice(0, 1000) : '';
   if (!correction) return res.status(400).json({ error: 'correction required' });
+  // Cap refinements so a session holder can't churn the read or burn model spend.
+  const refined = await db.claimRefine(session.id, 2);
+  if (refined === null) return res.status(429).json({ error: 'refine limit reached' });
 
   const baseTranscript = formatTranscript(storedI, 'TEEN', 'INTERVIEWER');
   const transcript = baseTranscript + '\n\n=== TEEN\'S CORRECTION ===\n' + correction;
@@ -575,6 +673,7 @@ app.post('/api/score/refine', async (req, res) => {
       return res.json({ safety: flag });
     }
     stripUnverifiedQuotes(parsed, baseTranscript); // verify quotes against the REAL transcript, not the correction
+    computeScoreMetadata(parsed); // D2: recompute level/bars/stage from the scores
     const refreshed = Object.assign({}, session.result || {}, { teen_output: parsed.teen_output || null, level: parsed.level || null });
     await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, result: refreshed });
     sendArchiveEmail(session, 'refined assessment', transcript, parsed);
@@ -620,6 +719,7 @@ app.post('/api/skills-score', async (req, res) => {
       await db.updateSession(session.id, { report_draft: draft, result: resultObj });
     }
     sendArchiveEmail(session, 'money scenarios', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
+    await db.updateSession(session.id, { decision_lab_status: 'completed' });
     res.json({ money_judgment: mj });
   } catch (e) {
     console.error('skills-score error:', e.message);
@@ -648,7 +748,9 @@ const REPORT_CATEGORY_LABEL = {
   growth_horizon: 'Where they are, and where they could be',
   confidence: 'How solid this read is',
   program_fit: 'How OTS could help',
-  support_request: 'How they’d like your support'
+  support_request: 'How they’d like your support',
+  parent_action: 'Your move this week',
+  conversation_starter: 'One question to ask'
 };
 // Build the approved parent-report items from the SERVER-STORED draft + the
 // teen's selections. Pure + exported so the forgery-resistance is unit-tested:
@@ -662,6 +764,9 @@ function buildApprovedItems(draft, selections, supportRaw) {
   if (draft.growth_horizon) available.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null });
   if (draft.confidence_summary) available.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null });
   if (draft.program_fit && draft.program_fit.text) available.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null });
+  // Personalized parent guidance is teen-approvable too — nothing personalized bypasses the veto.
+  if (draft.parent_action) available.push({ id: 'pa1', category: 'parent_action', text: draft.parent_action, evidence_quote: null });
+  if (draft.conversation_starter) available.push({ id: 'cq1', category: 'conversation_starter', text: draft.conversation_starter, evidence_quote: null });
   const items = [];
   available.forEach(it => {
     const sel = selById[it.id];
@@ -676,10 +781,14 @@ function buildApprovedItems(draft, selections, supportRaw) {
 
 function buildParentEmail(report, teenName, parentName) {
   const allItems = Array.isArray(report.shareable_items) ? report.shareable_items : [];
-  const items = allItems.filter(it => it.category !== 'support_request');
+  // The Handshake pulls these three (all teen-approved items); they never appear in the generic list.
+  const HANDSHAKE_CATS = new Set(['support_request', 'parent_action', 'conversation_starter']);
+  const items = allItems.filter(it => !HANDSHAKE_CATS.has(it.category));
   const support = allItems.find(it => it.category === 'support_request' && it.text); // teen's ask → Handshake
+  const parentAction = allItems.find(it => it.category === 'parent_action' && it.text); // teen-approved (pa1)
+  const convoStarter = allItems.find(it => it.category === 'conversation_starter' && it.text); // teen-approved (cq1)
   const ff = report.fixed_framing || {};
-  const hasHandshake = !!(support || report.parent_action || report.conversation_starter);
+  const hasHandshake = !!(support || parentAction || convoStarter);
 
   // ── HTML ──
   let h = '';
@@ -699,8 +808,8 @@ function buildParentEmail(report, teenName, parentName) {
     h += `<div style="margin:22px 0;padding:16px 18px;background:#f0fbf5;border:1px solid #cdeede;border-radius:12px">`;
     h += `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#3a9b6e;margin-bottom:11px;font-weight:600">A Family Handshake</div>`;
     if (support) h += row(`What ${escHtml(teenName)} asked for`, support.text, false);
-    if (report.parent_action) h += row('Your move this week', report.parent_action, false);
-    if (report.conversation_starter) h += row('One question to ask', report.conversation_starter, true);
+    if (parentAction) h += row('Your move this week', parentAction.text, false);
+    if (convoStarter) h += row('One question to ask', convoStarter.text, true);
     h += `</div>`;
   }
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
@@ -722,8 +831,8 @@ function buildParentEmail(report, teenName, parentName) {
   if (hasHandshake) {
     t += 'A FAMILY HANDSHAKE\n';
     if (support) t += '- What ' + teenName + ' asked for: ' + support.text + '\n';
-    if (report.parent_action) t += '- Your move this week: ' + report.parent_action + '\n';
-    if (report.conversation_starter) t += '- One question to ask: "' + report.conversation_starter + '"\n';
+    if (parentAction) t += '- Your move this week: ' + parentAction.text + '\n';
+    if (convoStarter) t += '- One question to ask: "' + convoStarter.text + '"\n';
     t += '\n';
   }
   if (Array.isArray(ff.what_not_to_do) && ff.what_not_to_do.length) {
@@ -733,8 +842,34 @@ function buildParentEmail(report, teenName, parentName) {
   }
   t += 'Outsmart the System — outsmartthesystem.org\nApproved by ' + teenName + ' before sending.';
 
-  return { subject: `${teenName}'s Money & Momentum Map — what they chose to share`, html, text: t };
+  return { subject: `${teenName}'s Money & Momentum Snapshot — what they chose to share`, html, text: t };
 }
+
+// ─── SHARE DECLINE ("Keep this private" / "Don't send anything") ────────────
+// Durable private decision: block any future parent-report send, drop the stored
+// report draft + transcript, clear the cookie. Survives reopen via sharing_status.
+app.post('/api/share/decline', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  if (s.sharing_status === 'pending') {
+    await db.updateSession(s.id, {
+      sharing_status: 'declined', sharing_decided_at: new Date(),
+      report_draft: null, turns: { interview: [], skills: [] } // private means no retained transcript/draft
+    });
+  }
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// ─── PRIVACY: DELETE MY RESULT ─────────────────────────────────────────────
+// Teen- or parent-initiated hard delete of everything for this session.
+app.post('/api/privacy/delete', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  await db.deleteSession(s.id);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
 
 app.post('/api/parent-report', async (req, res) => {
   const s = await currentSession(req);
@@ -743,6 +878,8 @@ app.post('/api/parent-report', async (req, res) => {
   // session sends at most once — regardless of what a modified client claims.
   // The 200 shape mirrors success so a probing client learns nothing.
   if (s.safety_blocked) { console.warn('[PARENT_REPORT_BLOCKED] safety sid=' + s.id); return res.json({ success: true }); }
+  // A declined or already-sent session never sends (durable sharing state).
+  if (s.sharing_status !== 'pending') { console.warn('[PARENT_REPORT_BLOCKED] sharing_status=' + s.sharing_status + ' sid=' + s.id); return res.json({ success: true }); }
 
   const webhook = process.env.TEEN_MAKE_WEBHOOK_URL;
   if (!webhook) return res.status(500).json({ error: 'Server not configured: TEEN_MAKE_WEBHOOK_URL missing' });
@@ -755,7 +892,7 @@ app.post('/api/parent-report', async (req, res) => {
 
   // Build the report from the SERVER-STORED draft + the teen's selections only.
   const approvedItems = buildApprovedItems(draft, req.body && req.body.selections, req.body && req.body.support_request);
-  const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null, parent_action: draft.parent_action || '', conversation_starter: draft.conversation_starter || '' };
+  const approved = { shareable_items: approvedItems, fixed_framing: draft.fixed_framing || null }; // pa1/cq1 now ride inside approvedItems (teen-approved)
 
   // ATOMIC one-time claim: exactly one caller wins; concurrent/repeat callers and
   // safety-blocked sessions get false (no double-send race). (audit P2)
@@ -877,7 +1014,10 @@ async function fireSafetyAlert(flag, info) {
 // SAFETY CARVE-OUT: a safety-flagged session is NEVER archived. CRISIS/ABUSE
 // disclosures are purged on the device and handled by the (quote-free) safety
 // alert — they must not land verbatim in an archive inbox.
-function archiveEnabled() { return !!(process.env.ARCHIVE_EMAIL_TO && safetyMailer); }
+function archiveEnabled() {
+  if ((process.env.LAUNCH_MODE || 'beta').toLowerCase() === 'production') return false; // never record in production
+  return !!(process.env.ARCHIVE_EMAIL_TO && safetyMailer);
+}
 
 async function sendArchiveEmail(session, kind, transcript, assessment) {
   if (!archiveEnabled()) return;
@@ -960,9 +1100,16 @@ app.get('/api/health', (req, res) => {
     safety_email: !!safetyMailer,
     durable_db: db.backend() === 'postgres' && db.ready()   // configured AND actually initialized
   };
+  // Production launch gates (go-live hardening): counsel sign-off + archiving OFF.
+  // In beta these are not required; in production they make ready=false until met.
+  const mode = (process.env.LAUNCH_MODE || 'beta').toLowerCase();
+  if (mode === 'production') {
+    configured.safety_review_approved = process.env.SAFETY_REVIEW_APPROVED === 'true';
+    configured.archive_disabled = !process.env.ARCHIVE_EMAIL_TO;
+  }
   const missing = Object.keys(configured).filter(k => !configured[k]);
-  // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready.
-  res.json({ ok: true, service: 'ots-teen-agent', ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
+  // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready in beta.
+  res.json({ ok: true, service: 'ots-teen-agent', mode, ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
 });
 
 // Serve ONLY the public asset directory (whitelist, not a blacklist). Backend
@@ -981,7 +1128,7 @@ if (require.main === module) {
     .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()}, ready: ${db.ready()})`)));
   // Purge expired session rows daily (getSession already treats them as gone; this
   // reclaims storage). Unref'd so it never keeps the process alive on its own.
-  const sweepExpired = () => db.deleteExpired()
+  const sweepExpired = () => db.deleteExpired(Number(process.env.UNSHARED_RESULT_RETENTION_DAYS) || 7)
     .then(n => { if (n) console.log('[CLEANUP] purged ' + n + ' expired session(s)'); })
     .catch(e => console.warn('[CLEANUP] failed:', e.message));
   setInterval(sweepExpired, 24 * 60 * 60 * 1000).unref();
@@ -991,5 +1138,6 @@ module.exports = {
   app,
   buildApprovedItems, buildParentEmail,
   formatTranscript, stripUnverifiedQuotes, validateScoring, validScore,
-  parseScoringJSON, phaseFor, interviewQuestionNum
+  parseScoringJSON, phaseFor, interviewQuestionNum,
+  computeScoreMetadata, stageForTotal
 };
