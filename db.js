@@ -114,6 +114,18 @@ async function claimReportSend(id) {
   return false;
 }
 
+// Purge rows whose 30-day TTL has passed. getSession already treats expired rows
+// as gone; this reclaims storage. Called on a daily interval by the server.
+async function deleteExpired() {
+  if (pool) {
+    const r = await pool.query('DELETE FROM sessions WHERE expires_at < now()');
+    return r.rowCount || 0;
+  }
+  let n = 0; const now = Date.now();
+  for (const [id, row] of mem) { if (new Date(row.expires_at).getTime() < now) { mem.delete(id); n++; } }
+  return n;
+}
+
 function backend() { return pool ? 'postgres' : 'memory'; }
 
-module.exports = { init, ready, createSession, getSession, updateSession, claimReportSend, backend };
+module.exports = { init, ready, createSession, getSession, updateSession, claimReportSend, deleteExpired, backend };

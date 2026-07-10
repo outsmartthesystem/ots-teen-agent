@@ -21,7 +21,7 @@ const MODEL_SCORING   = 'claude-opus-4-8';      // scoring is one careful call; 
 const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
 const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';      // ends the optional scenario check
 const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/;
-const TOTAL_QUESTIONS = 16;
+const TOTAL_QUESTIONS = 22;      // v5: 22 interview turns (server-side count is authoritative)
 const SESSION_KEY = 'ots_teen_session_v1';
 const SESSION_MAX_AGE_HOURS = 24;
 const SEED_MARKER = '__SEED_BEGIN__';           // hidden first user turn that triggers the opening frame
@@ -148,7 +148,7 @@ function resumeFromServer(turns) {
     else renderAssistantMessage(t.content);
   });
   const asst = turns.filter(t => t.role === 'assistant').length;
-  updateProgress({ q: Math.max(0, asst - 1), total: 16, phase: '' });
+  updateProgress({ q: Math.max(0, asst - 1), total: TOTAL_QUESTIONS, phase: '' });
   scrollToBottom();
   reEnableInput();
 }
@@ -197,7 +197,7 @@ function showResume(saved) {
 
 function setHeading() {
   const h = document.getElementById('chatHeading');
-  if (h) h.textContent = window.session.teen_first_name + "’s Check";
+  if (h) h.textContent = window.session.teen_first_name + "’s Money Map";
 }
 
 function rebuildChat() {
@@ -302,7 +302,7 @@ function updateProgress(p) {
   const fill = document.getElementById('cpFill');
   const label = document.getElementById('cpLabel');
   if (!wrap || !fill || !label || !p) return;
-  const total = p.total || 16;
+  const total = p.total || TOTAL_QUESTIONS;
   const q = Math.max(0, Math.min(p.q || 0, total));
   fill.style.width = Math.round((q / total) * 100) + '%';
   label.textContent = window.mode === 'skills'
@@ -469,12 +469,12 @@ function showDecisionLabPrompt() {
   root.innerHTML = '';
   const name = window.session.teen_first_name;
   const box = elem('div', 'dl-prompt');
-  box.appendChild(elem('div', 'dl-pill', 'Your read is ready'));
-  box.appendChild(elem('h1', 'result-h1', name + ', one quick thing first'));
-  box.appendChild(elem('p', 'dl-text', 'Your readiness map is done — but the complete version adds five quick real-life money decisions (about 3 minutes). It makes your result sharper and gives a more credible read for whatever you choose to share. Most people say it’s the most interesting part.'));
-  const add = elem('button', 'btn btn-primary dl-add', 'Add the 5 scenarios →');
+  box.appendChild(elem('div', 'dl-pill', 'Last part'));
+  box.appendChild(elem('h1', 'result-h1', name + ', last part before your result'));
+  box.appendChild(elem('p', 'dl-text', 'One more short round: five quick real-life money calls, about 3 minutes. It’s part of your map — it sharpens the read and it’s the part most people find most interesting. Then you get your full result.'));
+  const add = elem('button', 'btn btn-primary dl-add', 'Keep going → 5 quick scenarios');
   add.addEventListener('click', startSkills);
-  const skip = elem('button', 'btn btn-ghost dl-skip', 'Skip — just show my result');
+  const skip = elem('button', 'btn btn-ghost dl-skip', 'I’d rather stop here and see my result');
   skip.addEventListener('click', () => renderResult(window.scoringResult));
   box.appendChild(add); box.appendChild(skip);
   root.appendChild(box);
@@ -852,6 +852,7 @@ function buildMoneyJudgmentSection(mj) {
 // are sent. The parent is never told how many items were withheld.
 function showPreview() {
   if (window.blockParentReport) return; // safety guard — never reachable, but defensive
+  postEvent('map_share_opened');
   const draft = (window.scoringResult && window.scoringResult.parent_report_draft) || {};
   const items = (draft.shareable_items || []).map(it => ({
     id: it.id, category: it.category, text: it.text, evidence_quote: it.evidence_quote || null, shared: true
@@ -1210,7 +1211,8 @@ function downloadResultPDF() {
   if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
   try {
     const safeName = (window.session.teen_first_name || 'result').replace(/[^a-z0-9]/gi, '') || 'result';
-    buildResultPdfDoc().save('OTS-Teen-Check-' + safeName + '.pdf');
+    buildResultPdfDoc().save('OTS-Money-Map-' + safeName + '.pdf');
+    postEvent('map_pdf_saved');
     if (btn) { btn.disabled = false; btn.textContent = '⤓  Save my result as a PDF'; }
   } catch (e) {
     console.error('PDF error:', e);
@@ -1482,6 +1484,12 @@ function autoResize(el) {
 }
 
 function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Fire-and-forget funnel event → server (which relays to GA4). Best-effort only.
+function postEvent(name) {
+  try { fetch('/api/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }) }).catch(() => {}); }
+  catch (e) { /* analytics must never break the UX */ }
+}
 
 // One-tap Skip — no need to type "skip" (audit UI #2).
 function skipQuestion() {

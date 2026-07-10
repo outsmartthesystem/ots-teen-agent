@@ -1,4 +1,4 @@
-# OTS Teen Check — Safety SOP (DRAFT, pending professional review)
+# OTS Money & Momentum Map — Safety SOP (DRAFT, pending professional review)
 
 > **This is an operational draft, not legal advice.** The items marked
 > **[NEEDS COUNSEL]** must be reviewed by a lawyer and/or a licensed child-safety

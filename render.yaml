@@ -25,3 +25,9 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL        # optional; clean teen-link base
         sync: false
+      - key: GA4_MEASUREMENT_ID     # optional; server-side GA4 MP funnel events (with GA4_MP_API_SECRET)
+        sync: false
+      - key: GA4_MP_API_SECRET      # optional; GA4 Measurement Protocol API secret
+        sync: false
+      - key: GHL_SYNC_WEBHOOK_URL   # optional; CRM sync webhook for Map funnel tags
+        sync: false

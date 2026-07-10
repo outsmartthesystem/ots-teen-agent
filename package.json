@@ -1,7 +1,7 @@
 {
   "name": "ots-teen-agent",
   "version": "0.1.0",
-  "description": "Outsmart the System Teen Check — AI-guided self-discovery interview + scoring, with a teen-approved parent report.",
+  "description": "Outsmart the System Money & Momentum Map — AI-guided self-discovery interview + scoring, with a teen-approved parent report.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

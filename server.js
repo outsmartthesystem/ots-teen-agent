@@ -35,6 +35,33 @@ async function callAnthropic({ model, system, messages, max_tokens }) {
   return (data.content && data.content[0] && data.content[0].text) || '';
 }
 
+// ─── FUNNEL ANALYTICS + CRM SYNC (env-guarded, fire-and-forget) ─────────────
+// Mirror the website's server-side GA4 Measurement Protocol + an optional CRM
+// sync webhook so the Map funnel reports the same click→lead→paid events as the
+// diagnostic. BOTH are no-ops unless their env vars are set, and neither is
+// awaited in a request's critical path — a failure here can never break an
+// interview turn, a score, or a report send.
+function ga4Event(clientId, name, params) {
+  const id = process.env.GA4_MEASUREMENT_ID, secret = process.env.GA4_MP_API_SECRET;
+  if (!id || !secret) return; // unconfigured → silent no-op
+  fetch(`https://www.google-analytics.com/mp/collect?measurement_id=${encodeURIComponent(id)}&api_secret=${encodeURIComponent(secret)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: clientId || 'anon', events: [{ name, params: params || {} }] }),
+    timeout: 8000
+  }).catch(err => console.warn('[GA4]', name, 'failed:', err.message));
+}
+function ghlSync(event, s, tag) {
+  const url = process.env.GHL_SYNC_WEBHOOK_URL;
+  if (!url || !s) return; // unconfigured → silent no-op
+  fetch(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, tag, parent_email: s.parent_email, parent_first_name: s.parent_first_name, teen_first_name: s.teen_first_name, teen_age: s.teen_age }),
+    timeout: 10000
+  }).catch(err => console.warn('[GHL_SYNC]', event, 'failed:', err.message));
+}
+// Client-only funnel events allowed through /api/event (server relays to GA4).
+const EVENT_WHITELIST = new Set(['map_pdf_saved', 'map_share_opened', 'map_preview_started']);
+
 // Server-side copies of the scoring JSON parse + validate (mirror the client).
 function parseScoringJSON(text) {
   let t = String(text).trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
@@ -66,7 +93,7 @@ function validateScoring(p) {
 // scoring from its OWN stored transcript — the client never supplies the prompt
 // or the transcript, so neither can be tampered with.
 const SEED_MARKER = '__SEED_BEGIN__';
-const TOTAL_QUESTIONS = 16;
+const TOTAL_QUESTIONS = 22; // v5: was 16 — splits of the old double-barrels + 2 new questions
 const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
 const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';
 const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|SUPPORT)\]/;
@@ -92,19 +119,29 @@ function interviewQuestionNum(turns) {
 // Coarse phase label for the visible progress bar (the interview is model-paced,
 // so this is an approximate map, not a strict state machine).
 function phaseFor(q) {
-  if (q <= 3) return 'Getting started';
-  if (q <= 8) return 'What you want';
-  if (q <= 13) return 'Your money reality';
-  return 'Patterns & your move';
+  // v5 phase map (22 questions): Arrival 1–3 · What You Want 4–10 ·
+  // The Reality Check 11–15 · Family Patterns 16–18 · The Gap 19–22.
+  if (q <= 3) return 'Arrival';
+  if (q <= 10) return 'What you want';
+  if (q <= 15) return 'The reality check';
+  if (q <= 18) return 'Family patterns';
+  return 'The gap';
 }
 
 // Quick-answer chips: when the model asks one of the list-style questions, offer
 // tappable options (the teen can still type). Keyed off the question wording, so
 // chips only appear when the matching question is actually asked.
 const CHIP_SETS = [
+  // Q2 — school/work status
   { test: /school.*work|work.*school|year off/i, chips: ['In school', 'Working', 'Both', 'Taking time off'] },
-  { test: /curiosity or planning|wanting things|some mix|mostly a mix/i, chips: ['Wanting things', 'Planning ahead', 'Stress about it', 'Just curious', 'A mix'] },
-  { test: /planned and talked about openly|mostly avoided|saved really cautiously|stressful or tense/i, chips: ['Planned & open', 'Mostly avoided', 'Spent freely', 'Saved cautiously', 'Often tense', 'Depends on the adult'] }
+  // Q3 — how they think about money (multi-select ok; free text always open)
+  { test: /money's on your mind|what's it usually about/i, chips: ['Curiosity', 'Planning ahead', 'Wanting things', 'Stress', 'Barely think about it'] },
+  // Q10 — control split (in-control vs not)
+  { test: /actually up to you/i, chips: ['Mostly me', 'Mostly not up to me', 'Honestly both'] },
+  // Q13 — money-amount ranges, with an honesty-preserving "Rather not say"
+  { test: /how much money is actually yours|money is actually yours/i, chips: ['Under $50', '$50–250', '$250–1,000', 'Over $1,000', 'Rather not say'] },
+  // Q17 — home money climate
+  { test: /sound most like home/i, chips: ['Planned & talked about openly', 'Mostly avoided', 'Spent pretty freely', 'Saved really cautiously', 'Often stressful or tense', 'Different depending on the adult'] }
 ];
 function chipsFor(msg) { const f = CHIP_SETS.find(c => c.test.test(String(msg || ''))); return f ? f.chips : null; }
 // The goal-priority question — the teen's NEXT answer becomes the pinned goal chip.
@@ -306,6 +343,8 @@ app.post('/api/register', async (req, res) => {
     console.error('register/createSession error:', e.message);
     return res.status(500).json({ error: 'Could not create the session. Try again.' });
   }
+  ga4Event('sess.' + id, 'map_registered', { teen_age: age });
+  ghlSync('map_registered', { parent_email: pEmail, parent_first_name: pName, teen_first_name: tName, teen_age: age }, 'map-registered');
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
   res.json({ teen_url: `${base}/?s=${id}`, expires_at: Math.floor(expires_at / 1000) });
 });
@@ -495,6 +534,8 @@ app.post('/api/score', async (req, res) => {
     const teenResult = { teen_output: parsed.teen_output || null, level: parsed.level || null };
     await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns, result: teenResult });
     sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
+    ga4Event('sess.' + session.id, 'map_interview_complete', {});
+    ga4Event('sess.' + session.id, 'map_result_viewed', { stage: (parsed.level && parsed.level.stage) || '' });
     res.json({ result: parsed }); // no parent_email anywhere in the model output
   } catch (e) {
     console.error('score error:', e.message);
@@ -643,7 +684,7 @@ function buildParentEmail(report, teenName, parentName) {
   // ── HTML ──
   let h = '';
   h += `<p>Hi ${escHtml(parentName)},</p>`;
-  h += `<p>${escHtml(teenName)} just completed the Outsmart the System Teen Check. They saw their own result first and chose what to share with you — here it is.</p>`;
+  h += `<p>${escHtml(teenName)} just completed their Teen Money & Momentum Map. They saw their own result first and chose what to share with you — here it is.</p>`;
   if (ff.limitation) h += `<p style="font-size:13px;color:#555;background:#f5f6f8;padding:11px 14px;border-radius:8px;margin:16px 0">${escHtml(ff.limitation)}</p>`;
   items.forEach(it => {
     h += `<div style="margin:14px 0;padding:12px 16px;border-left:3px solid #2f6df0;background:#f6f9ff;border-radius:0 8px 8px 0">`;
@@ -671,7 +712,7 @@ function buildParentEmail(report, teenName, parentName) {
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.55;font-size:15px">${h}</div>`;
 
   // ── plaintext ──
-  let t = `Hi ${parentName},\n\n${teenName} just completed the Outsmart the System Teen Check. They saw their own result first and chose what to share with you.\n\n`;
+  let t = `Hi ${parentName},\n\n${teenName} just completed their Teen Money & Momentum Map. They saw their own result first and chose what to share with you.\n\n`;
   if (ff.limitation) t += ff.limitation + '\n\n';
   items.forEach(it => {
     t += (REPORT_CATEGORY_LABEL[it.category] || 'Shared').toUpperCase() + '\n' + it.text + '\n';
@@ -692,7 +733,7 @@ function buildParentEmail(report, teenName, parentName) {
   }
   t += 'Outsmart the System — outsmartthesystem.org\nApproved by ' + teenName + ' before sending.';
 
-  return { subject: `${teenName}'s Teen Check — what they chose to share`, html, text: t };
+  return { subject: `${teenName}'s Money & Momentum Map — what they chose to share`, html, text: t };
 }
 
 app.post('/api/parent-report', async (req, res) => {
@@ -741,6 +782,8 @@ app.post('/api/parent-report', async (req, res) => {
       await db.updateSession(s.id, { report_sent: false }); // allow a retry
       return res.status(502).json({ error: 'webhook rejected', status: r.status });
     }
+    ga4Event('sess.' + s.id, 'map_report_sent', {});
+    ghlSync('map_report_sent', s, 'map-report-sent');
     res.json({ success: true });
   } catch (err) {
     console.error('Parent-report webhook error:', err.message);
@@ -778,11 +821,11 @@ const alertedEvents = new Set();   // dedup keys: `${sid}:${flag}` (alert dedup 
 function buildSafetyEmail(flag, info) {
   const name = escHtml(info.teen_first_name || 'a teen');
   const age = escHtml(info.teen_age);
-  const subject = `⚠️ OTS Teen Check — ${flag} flag — ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
+  const subject = `⚠️ OTS Money & Momentum Map — ${flag} flag — ${info.teen_first_name || 'teen'} (age ${info.teen_age})`;
   let h = '';
   h += `<div style="background:${flag === 'ABUSE' ? '#7a1f1f' : '#8a4b00'};color:#fff;padding:12px 16px;border-radius:10px 10px 0 0;font-weight:700;font-size:16px">Safety flag: ${escHtml(flag)}</div>`;
   h += `<div style="border:1px solid #e2e2e2;border-top:none;border-radius:0 0 10px 10px;padding:16px">`;
-  h += `<p>A teen using the Teen Check just triggered a <b>${escHtml(flag)}</b> safety flag.</p>`;
+  h += `<p>A teen using the Money & Momentum Map just triggered a <b>${escHtml(flag)}</b> safety flag.</p>`;
   if (flag === 'ABUSE') {
     h += `<p style="background:#fdecec;border:1px solid #f5b5b5;color:#7a1f1f;padding:11px 14px;border-radius:8px;font-weight:600">⚠️ Do NOT contact the parent. The parent who set this up may be the concern. Follow the ABUSE branch of the SOP.</p>`;
   }
@@ -793,8 +836,8 @@ function buildSafetyEmail(flag, info) {
   h += `</tbody></table>`;
   h += `<p style="color:#555;font-size:13px">This alert contains <b>no quotes</b> from the teen, by policy. The teen has already been shown crisis resources (988/911) in the conversation, and no report will go to the parent for this session.</p>`;
   h += `<p style="font-weight:600;margin:14px 0 4px">What to do now</p>`;
-  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Teen Check Safety SOP. OTS's role is to connect the teen to real help, not to counsel. Never forward this to the parent.</p>`;
-  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Teen Check safety routing</p>`;
+  h += `<p style="color:#444;font-size:14px;margin-top:0">Follow the OTS Money & Momentum Map Safety SOP. OTS's role is to connect the teen to real help, not to counsel. Never forward this to the parent.</p>`;
+  h += `<p style="font-size:12px;color:#999;border-top:1px solid #eee;padding-top:10px;margin-top:16px">Outsmart the System — Money & Momentum Map safety routing</p>`;
   h += `</div>`;
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.5;font-size:15px">${h}</div>`;
   return { subject, html };
@@ -842,7 +885,7 @@ async function sendArchiveEmail(session, kind, transcript, assessment) {
   const to = process.env.ARCHIVE_EMAIL_TO;
   const pretty = (() => { try { return JSON.stringify(assessment, null, 2); } catch { return String(assessment); } })();
   const pre = 'white-space:pre-wrap;word-break:break-word;background:#f6f8fa;border:1px solid #e1e4e8;border-radius:8px;padding:12px;font-size:12px';
-  const subject = `[Teen Check archive] ${session.teen_first_name} (${session.teen_age}) — ${kind}`;
+  const subject = `[Money & Momentum Map archive] ${session.teen_first_name} (${session.teen_age}) — ${kind}`;
   const html =
     `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:760px;color:#1a1a1a;line-height:1.5;font-size:14px">` +
     `<p style="background:#fff7e6;border:1px solid #ffe0a3;padding:8px 12px;border-radius:8px;font-size:12px">TEST-PHASE RECORDING — internal improvement data. Turn off by clearing <b>ARCHIVE_EMAIL_TO</b> before go-live.</p>` +
@@ -875,16 +918,19 @@ app.post('/api/safety-event', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── ANTHROPIC CHAT (Prompt A turns AND the Prompt B scoring call) ─────────
-// Model-agnostic proxy. The frontend supplies system/messages/max_tokens and a
-// whitelisted model, plus the session token `t` (used only for server-side
-// safety attribution — it is NOT forwarded to Anthropic).
-const ALLOWED_MODELS = new Set([
-  'claude-sonnet-4-6',
-  'claude-opus-4-8',
-  'claude-haiku-4-5-20251001'
-]);
+// ─── CLIENT EVENT (funnel analytics) ───────────────────────────────────────
+// Cookie-gated relay for client-only funnel events (PDF saved, share opened).
+// Whitelisted names only; forwarded to GA4 server-side. No-op if GA4 is unset.
+app.post('/api/event', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  const name = String((req.body && req.body.name) || '');
+  if (!EVENT_WHITELIST.has(name)) return res.status(400).json({ error: 'unknown event' });
+  ga4Event('sess.' + s.id, name, {});
+  res.json({ ok: true });
+});
 
+// ─── ANTHROPIC CHAT (removed) ──────────────────────────────────────────────
 // The generic /api/chat proxy is GONE (Phase 4). The interview, skills, and
 // scoring all run through server-orchestrated endpoints that own the prompt and
 // the transcript — there is no longer any path that forwards a client-supplied
@@ -933,6 +979,12 @@ if (require.main === module) {
     .then(() => console.log('session store ready:', db.backend()))
     .catch(e => console.error('[DB_INIT_FAILED] data store unreachable — API will FAIL CLOSED (503) until it recovers:', e.message))
     .finally(() => app.listen(PORT, () => console.log(`ots-teen-agent running on port ${PORT} (db: ${db.backend()}, ready: ${db.ready()})`)));
+  // Purge expired session rows daily (getSession already treats them as gone; this
+  // reclaims storage). Unref'd so it never keeps the process alive on its own.
+  const sweepExpired = () => db.deleteExpired()
+    .then(n => { if (n) console.log('[CLEANUP] purged ' + n + ' expired session(s)'); })
+    .catch(e => console.warn('[CLEANUP] failed:', e.message));
+  setInterval(sweepExpired, 24 * 60 * 60 * 1000).unref();
 }
 
 module.exports = {
