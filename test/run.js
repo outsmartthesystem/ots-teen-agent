@@ -168,6 +168,31 @@ test('stageForTotal: band boundaries', () => {
   eq(srv.stageForTotal(14), 'In Motion'); eq(srv.stageForTotal(18), 'Building');
   eq(srv.stageForTotal(22), 'Outsmarting');
 });
+test('QUESTION_REGISTRY: 22 questions, chips on the right ones, Q5 = goal', () => {
+  eq(srv.QUESTION_REGISTRY.length, 22, '22 questions');
+  eq(srv.QUESTION_REGISTRY.map(q => q.n).join(','), Array.from({ length: 22 }, (_, i) => i + 1).join(','), 'numbered 1..22');
+  [2, 3, 10, 13, 17].forEach(n => ok(srv.QUESTION_REGISTRY[n - 1].chips, 'Q' + n + ' has chips'));
+  ok(/matters most/.test(srv.QUESTION_REGISTRY[4].text), 'Q5 is the goal question');
+});
+test('parseInterviewMarker: ASKED / REPAIR / none', () => {
+  eq(srv.parseInterviewMarker('hi [ASKED:Q7]').type, 'ASKED');
+  eq(srv.parseInterviewMarker('hi [ASKED:Q7]').n, 7);
+  eq(srv.parseInterviewMarker('x [REPAIR:Q3] y').type, 'REPAIR');
+  eq(srv.parseInterviewMarker('no marker here'), null);
+});
+test('deterministicAnchor: injects question text + marker; age-substituted', () => {
+  const a = srv.deterministicAnchor(1, null, 14);
+  ok(a.includes('[ASKED:Q1]'), 'marker present');
+  ok(a.includes('14'), 'age substituted into Q1');
+  ok(!a.includes('{{AGE}}'), 'placeholder replaced');
+});
+test('paid-pass: valid round-trips; tamper + expiry + malformed rejected', () => {
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() + 60000)), true, 'fresh pass valid');
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() + 60000) + 'x'), false, 'tampered sig rejected');
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() - 1000)), false, 'expired rejected');
+  eq(srv.verifyPaidPass(''), false, 'empty rejected');
+  eq(srv.verifyPaidPass('nodot'), false, 'malformed rejected');
+});
 test('parseScoringJSON: fenced, plain, garbage', () => {
   eq(srv.parseScoringJSON('```json\n{"a":1}\n```').a, 1, 'fenced');
   eq(srv.parseScoringJSON('noise {"a":2} trailing').a, 2, 'embedded');

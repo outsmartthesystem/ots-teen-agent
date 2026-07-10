@@ -39,3 +39,11 @@ services:
         sync: false
       - key: UNSHARED_RESULT_RETENTION_DAYS # unshared finished-result purge window (default 7)
         sync: false
+      - key: PAYMENT_REQUIRED       # PR E: true to require the $47 paid-pass at register (beta=false)
+        sync: false
+      - key: MAP_PAYMENT_URL        # Stripe Payment Link for the $47 Map
+        sync: false
+      - key: STRIPE_SECRET_KEY      # verifies the Stripe checkout session at /paid
+        sync: false
+      - key: PAYPASS_SECRET         # HMAC key for the paid-pass cookie (else MAKE_SHARED_SECRET)
+        sync: false

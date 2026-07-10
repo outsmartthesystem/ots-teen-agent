@@ -48,6 +48,10 @@
     .info-block h3 { font-size: 14px; margin: 0 0 4px; color: var(--accent-2); }
     .info-block p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.5; }
     .info-note { margin-top: 14px; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; font-size: 13.5px; color: var(--text); line-height: 1.5; }
+    .pay-gate { text-align: center; padding: 8px 0 4px; }
+    .pay-price { font-size: 44px; font-weight: 800; color: var(--accent-2); line-height: 1; }
+    .pay-desc { color: var(--muted); margin: 8px 0 18px; font-size: 14.5px; line-height: 1.5; }
+    #payBtn { width: 100%; }
 
     /* Success state */
     .success { display: none; }
@@ -68,6 +72,12 @@
     <p class="lede">The <strong>Teen Money &amp; Momentum Map</strong> gives your teen a private System Map, and gives you a teen-approved guide for how to support them — without nagging, lecturing, or taking over. About 15–20 minutes, on their own.</p>
 
     <div class="card">
+      <div class="pay-gate" id="payGate" style="display:none">
+        <div class="pay-price">$47</div>
+        <p class="pay-desc">The full Teen Money &amp; Momentum Map — your teen's private System Map, the Decision Lab, a premium PDF, and a teen-approved guide for you. One-time.</p>
+        <button class="btn" id="payBtn" type="button">Pay $47 &amp; set up →</button>
+        <p class="fine">You'll pay securely on Stripe, then come back here to create your teen's link.</p>
+      </div>
       <!-- FORM -->
       <form id="form" novalidate>
         <div class="consent">
