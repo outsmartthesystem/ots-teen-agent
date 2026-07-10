@@ -20,6 +20,7 @@
 const USE_PG = !!process.env.DATABASE_URL;
 let pool = null;
 const mem = new Map();
+const memPayments = new Set(); // consumed Stripe checkout session ids (memory backend)
 
 if (USE_PG) {
   const { Pool } = require('pg');
@@ -61,6 +62,8 @@ async function init() {
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS refine_count INTEGER NOT NULL DEFAULT 0`);
   // Look up sessions by invite token hash during the one-time claim.
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_sessions_invite ON sessions (invite_token_hash)`);
+  // Consumed Stripe checkout sessions — one purchase = one teen setup.
+  await pool.query(`CREATE TABLE IF NOT EXISTS payments (stripe_session_id TEXT PRIMARY KEY, consumed_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   initialized = true;
 }
 function ready() { return initialized; }
@@ -224,9 +227,21 @@ async function deleteExpired(unsharedGraceDays) {
   return n;
 }
 
+// Atomically claim a Stripe checkout session id as consumed. Returns true exactly
+// once per session id (one purchase = one teen setup); false on reuse.
+async function claimPaymentSession(sessionId) {
+  if (!sessionId) return false;
+  if (pool) {
+    const r = await pool.query('INSERT INTO payments (stripe_session_id) VALUES ($1) ON CONFLICT (stripe_session_id) DO NOTHING RETURNING stripe_session_id', [sessionId]);
+    return r.rowCount === 1;
+  }
+  if (memPayments.has(sessionId)) return false;
+  memPayments.add(sessionId); return true;
+}
+
 function backend() { return pool ? 'postgres' : 'memory'; }
 
 module.exports = {
   init, ready, createSession, getSession, claimInvite, updateSession,
-  claimReportSend, claimRefine, deleteSession, deleteExpired, backend
+  claimReportSend, claimRefine, deleteSession, deleteExpired, claimPaymentSession, backend
 };

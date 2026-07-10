@@ -400,35 +400,58 @@ function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest
 // confirms the checkout. Registration requires it ONLY when PAYMENT_REQUIRED=true
 // (beta stays open). Single-use: cleared on a successful register.
 const PAID_COOKIE = 'ots_paid';
+// Entitling products: a paid checkout for ANY of these unlocks the Map. Includes
+// the $47 Map itself AND the $97 Teen Side Hustle (the Map is bundled free with it).
+// Both live in the same Stripe account, so one STRIPE_SECRET_KEY verifies either.
+// Override via MAP_ENTITLING_PRODUCTS (comma-separated); empty = any paid session.
+const ENTITLING_PRODUCTS = (process.env.MAP_ENTITLING_PRODUCTS ||
+  'prod_UrCi4sFRdmRsKs,prod_UqGZ5Zq2pxysjb').split(',').map(s => s.trim()).filter(Boolean);
 function paypassSecret() { return process.env.PAYPASS_SECRET || process.env.MAKE_SHARED_SECRET || 'dev-insecure-paypass'; }
-function signPaidPass(expMs) { return expMs + '.' + crypto.createHmac('sha256', paypassSecret()).update(String(expMs)).digest('hex'); }
+// The paid-pass binds the expiry AND the Stripe session id, so register can mark
+// that exact purchase consumed — one purchase = one teen setup (a $97 Side Hustle
+// can't mint unlimited free $47 Maps).
+function signPaidPass(expMs, sessionId) {
+  const sid = String(sessionId || '');
+  return expMs + '~' + sid + '~' + crypto.createHmac('sha256', paypassSecret()).update(expMs + '~' + sid).digest('hex');
+}
 function verifyPaidPass(val) {
-  if (!val) return false;
-  const i = String(val).indexOf('.');
-  if (i < 0) return false;
-  const expMs = String(val).slice(0, i), sig = String(val).slice(i + 1);
-  const expect = crypto.createHmac('sha256', paypassSecret()).update(expMs).digest('hex');
-  try { if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return false; }
-  catch (e) { return false; }
-  return Number(expMs) > Date.now();
+  if (!val) return { ok: false };
+  const parts = String(val).split('~');
+  if (parts.length !== 3) return { ok: false };
+  const expMs = parts[0], sessionId = parts[1], sig = parts[2];
+  const expect = crypto.createHmac('sha256', paypassSecret()).update(expMs + '~' + sessionId).digest('hex');
+  try { if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return { ok: false }; }
+  catch (e) { return { ok: false }; }
+  if (!(Number(expMs) > Date.now())) return { ok: false };
+  return { ok: true, sessionId };
 }
 function paidCookieFrom(req) { const m = (req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + PAID_COOKIE + '=([^;]+)')); return m ? m[1] : null; }
-function setPaidCookie(req, res) {
+function setPaidCookie(req, res, sessionId) {
   const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  const parts = [PAID_COOKIE + '=' + signPaidPass(Date.now() + 2 * 60 * 60 * 1000), 'HttpOnly', 'Path=/', 'SameSite=Lax', 'Max-Age=7200'];
+  const parts = [PAID_COOKIE + '=' + signPaidPass(Date.now() + 2 * 60 * 60 * 1000, sessionId), 'HttpOnly', 'Path=/', 'SameSite=Lax', 'Max-Age=7200'];
   if (secure) parts.push('Secure');
   res.setHeader('Set-Cookie', parts.join('; '));
 }
 function clearPaidCookie(res) { res.setHeader('Set-Cookie', PAID_COOKIE + '=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax'); }
-// Verify a Stripe Checkout session was actually paid (needs STRIPE_SECRET_KEY).
+// A checkout session entitles the Map iff it's paid AND (no restriction set OR a
+// line item's product is entitling). Pure + exported for tests.
+function sessionEntitles(s, entitling) {
+  if (!s || s.payment_status !== 'paid') return false;
+  if (!entitling || !entitling.length) return true; // no restriction → any paid session
+  const items = (s.line_items && Array.isArray(s.line_items.data)) ? s.line_items.data : [];
+  const products = items.map(li => (li && li.price && li.price.product) || '').filter(Boolean);
+  return products.some(p => entitling.includes(p));
+}
+// Verify a Stripe Checkout session was paid AND is for an entitling product (the
+// $47 Map or the $97 Side Hustle). Needs STRIPE_SECRET_KEY.
 async function verifyStripeSession(sessionId) {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key || !sessionId) return null;
   try {
-    const r = await fetch('https://api.stripe.com/v1/checkout/sessions/' + encodeURIComponent(sessionId), { headers: { Authorization: 'Bearer ' + key }, timeout: 10000 });
+    const r = await fetch('https://api.stripe.com/v1/checkout/sessions/' + encodeURIComponent(sessionId) + '?expand[]=line_items', { headers: { Authorization: 'Bearer ' + key }, timeout: 10000 });
     if (!r.ok) return null;
     const s = await r.json();
-    return (s && s.payment_status === 'paid') ? s : null;
+    return sessionEntitles(s, ENTITLING_PRODUCTS) ? s : null;
   } catch (e) { console.warn('[STRIPE] session verify failed:', e.message); return null; }
 }
 
@@ -548,7 +571,7 @@ app.get('/paid', async (req, res) => {
   const paidSession = sessionId ? await verifyStripeSession(sessionId) : null;
   const ok = !!paidSession || (!required && !!sessionId); // trust the return only when enforcement is off (beta)
   if (ok) {
-    setPaidCookie(req, res);
+    setPaidCookie(req, res, sessionId);
     const email = (paidSession && paidSession.customer_details && paidSession.customer_details.email) || '';
     ga4Event('pay.' + (sessionId || 'anon'), 'map_purchase', { value: 47, currency: 'USD' });
     if (email) ghlSync('map_purchase', { parent_email: email, parent_first_name: '', teen_first_name: '', teen_age: 0 }, 'map-paid');
@@ -561,7 +584,12 @@ app.get('/paid', async (req, res) => {
 // ?i= invite token). The session id is unguessable random and never in the link.
 app.post('/api/register', async (req, res) => {
   // PR E: when payment is enforced, require a valid paid-pass (from /paid). Beta = open.
-  if (process.env.PAYMENT_REQUIRED === 'true' && !verifyPaidPass(paidCookieFrom(req))) return res.status(402).json({ error: 'payment required' });
+  // One purchase = one teen: the pass carries the Stripe session id, consumed atomically here.
+  if (process.env.PAYMENT_REQUIRED === 'true') {
+    const pass = verifyPaidPass(paidCookieFrom(req));
+    if (!pass.ok || !pass.sessionId) return res.status(402).json({ error: 'payment required' });
+    if (!(await db.claimPaymentSession(pass.sessionId))) return res.status(402).json({ error: 'this purchase was already used to set up a teen' });
+  }
   const { teen_first_name, teen_age, parent_first_name, parent_email, consent } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
@@ -1324,6 +1352,6 @@ module.exports = {
   formatTranscript, stripUnverifiedQuotes, validateScoring, validScore,
   parseScoringJSON, phaseFor, interviewQuestionNum,
   computeScoreMetadata, stageForTotal,
-  signPaidPass, verifyPaidPass,
+  signPaidPass, verifyPaidPass, sessionEntitles,
   QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker
 };

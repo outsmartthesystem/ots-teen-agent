@@ -85,14 +85,16 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
     assert.strictEqual(h.ok, true, 'health ok');
   });
 
-  await t('payment gate: register 402 without a paid pass, 200 with one (PAYMENT_REQUIRED)', async () => {
+  await t('payment gate: 402 without pass; 200 with a session-bound pass; same purchase reused -> 402', async () => {
     process.env.PAYMENT_REQUIRED = 'true';
     try {
       const blocked = await post('/api/register', REG);
       assert.strictEqual(blocked.status, 402, 'no paid pass -> 402');
-      const passCookie = 'ots_paid=' + srv.signPaidPass(Date.now() + 60000);
-      const okReg = await fetch(B + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: passCookie }, body: JSON.stringify(REG) });
-      assert.strictEqual(okReg.status, 200, 'valid paid pass -> 200');
+      const cookie = 'ots_paid=' + srv.signPaidPass(Date.now() + 60000, 'cs_test_bundle_1');
+      const first = await fetch(B + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(REG) });
+      assert.strictEqual(first.status, 200, 'valid pass -> 200 (first teen)');
+      const reuse = await fetch(B + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify(REG) });
+      assert.strictEqual(reuse.status, 402, 'same purchase reused -> 402 (one purchase = one teen)');
     } finally { delete process.env.PAYMENT_REQUIRED; }
   });
 
