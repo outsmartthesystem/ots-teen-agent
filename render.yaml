@@ -47,3 +47,5 @@ services:
         sync: false
       - key: PAYPASS_SECRET         # HMAC key for the paid-pass cookie (else MAKE_SHARED_SECRET)
         sync: false
+      - key: MAP_ENTITLING_PRODUCTS # Stripe product ids that unlock the Map ($47 Map + $97 Side Hustle)
+        sync: false

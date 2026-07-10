@@ -107,6 +107,12 @@ test('db: deleteExpired keeps a recent unshared result', async () => {
   await db.deleteExpired(7);
   ok(await db.getSession(id), 'recent unshared result kept');
 });
+test('db: claimPaymentSession is one-time per Stripe session id', async () => {
+  const sid = 'cs_' + nid();
+  eq(await db.claimPaymentSession(sid), true, 'first claim wins');
+  eq(await db.claimPaymentSession(sid), false, 'reuse of same purchase loses');
+  eq(await db.claimPaymentSession(''), false, 'empty id false');
+});
 
 // ─────────────────────── server helpers ──────────────────────
 test('formatTranscript: labels, seed filtered, separator', () => {
@@ -186,12 +192,23 @@ test('deterministicAnchor: injects question text + marker; age-substituted', () 
   ok(a.includes('14'), 'age substituted into Q1');
   ok(!a.includes('{{AGE}}'), 'placeholder replaced');
 });
-test('paid-pass: valid round-trips; tamper + expiry + malformed rejected', () => {
-  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() + 60000)), true, 'fresh pass valid');
-  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() + 60000) + 'x'), false, 'tampered sig rejected');
-  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() - 1000)), false, 'expired rejected');
-  eq(srv.verifyPaidPass(''), false, 'empty rejected');
-  eq(srv.verifyPaidPass('nodot'), false, 'malformed rejected');
+test('paid-pass: valid round-trips w/ session id; tamper + expiry + malformed rejected', () => {
+  const good = srv.signPaidPass(Date.now() + 60000, 'cs_test_abc');
+  eq(srv.verifyPaidPass(good).ok, true, 'fresh pass valid');
+  eq(srv.verifyPaidPass(good).sessionId, 'cs_test_abc', 'session id round-trips');
+  eq(srv.verifyPaidPass(good + 'x').ok, false, 'tampered sig rejected');
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() - 1000, 'cs_x')).ok, false, 'expired rejected');
+  eq(srv.verifyPaidPass('').ok, false, 'empty rejected');
+  eq(srv.verifyPaidPass('nodelim').ok, false, 'malformed rejected');
+});
+test('sessionEntitles: paid entitling product unlocks; wrong product / unpaid rejected', () => {
+  const map = { payment_status: 'paid', line_items: { data: [{ price: { product: 'prod_MAP' } }] } };
+  const other = { payment_status: 'paid', line_items: { data: [{ price: { product: 'prod_OTHER' } }] } };
+  const unpaid = { payment_status: 'unpaid', line_items: { data: [{ price: { product: 'prod_MAP' } }] } };
+  eq(srv.sessionEntitles(map, ['prod_MAP', 'prod_SH']), true, 'map product entitles');
+  eq(srv.sessionEntitles(other, ['prod_MAP', 'prod_SH']), false, 'non-entitling product rejected');
+  eq(srv.sessionEntitles(unpaid, ['prod_MAP']), false, 'unpaid rejected');
+  eq(srv.sessionEntitles(map, []), true, 'no restriction -> any paid session');
 });
 test('parseScoringJSON: fenced, plain, garbage', () => {
   eq(srv.parseScoringJSON('```json\n{"a":1}\n```').a, 1, 'fenced');
