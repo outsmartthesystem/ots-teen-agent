@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node --env-file=.env server.js",
     "build:prompts": "node build-prompts.js",
-    "test": "node test/run.js && node test/integration.js"
+    "test": "node test/run.js && node test/integration.js && node test/interview-deterministic.js"
   },
   "engines": {
     "node": ">=20.6"
