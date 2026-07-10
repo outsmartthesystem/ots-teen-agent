@@ -45,23 +45,27 @@ function activeHistory() { return window.mode === 'skills' ? skillsHistory : con
 document.addEventListener('DOMContentLoaded', boot);
 
 async function boot() {
-  const linkId = new URLSearchParams(location.search).get('s');
+  const params = new URLSearchParams(location.search);
+  const inviteToken = params.get('i');       // new one-time invite token
+  const legacyId = params.get('s');           // legacy session-id link (pre-hardening)
+  const linkId = inviteToken || legacyId;
   let session;
   try {
     if (linkId) {
-      // First open: exchange the opaque link id for an HttpOnly session cookie.
+      // First open: atomically CLAIM the one-time invite and get an HttpOnly cookie
+      // (the session id — which the new link never contained).
       const r = await fetch('/api/session/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ s: linkId })
+        body: JSON.stringify(inviteToken ? { i: inviteToken } : { s: legacyId })
       });
       const j = await r.json();
       if (!r.ok) {
-        return showError(j.error === 'invalid or expired link'
-          ? "This link has expired or isn't valid anymore. Ask for a fresh one."
+        return showError(r.status === 410
+          ? "This private link has already been used. Ask whoever set it up to create a fresh one."
           : (j.error || 'Could not start the session.'));
       }
       session = j;
-      // Strip the id from the URL so it isn't left in the address bar / history.
+      // Strip the token from the URL so it isn't left in the address bar / history.
       history.replaceState(null, '', location.pathname);
       // Fresh start — drop any stale transcript left in this tab by another session.
       clearSession();
@@ -630,8 +634,14 @@ function buildNextSteps() {
 async function keepPrivate() {
   const parent = window.session.parent_first_name;
   if (!confirm('Keep this just for you? Nothing will be sent to ' + parent + '.')) return;
+  declineShare();
+}
+
+// Durable "private" decision: tell the server to block any future send and purge
+// the draft/transcript, then confirm. Used by the result screen AND the preview.
+async function declineShare() {
   clearSession();
-  try { await fetch('/api/session/end', { method: 'POST' }); } catch (e) {}
+  try { await fetch('/api/share/decline', { method: 'POST' }); } catch (e) {}
   renderSent(false);
 }
 
@@ -863,6 +873,8 @@ function showPreview() {
   if (draft.growth_horizon) items.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null, shared: true });
   if (draft.confidence_summary) items.push({ id: 'cs1', category: 'confidence', text: draft.confidence_summary, evidence_quote: null, shared: true });
   if (draft.program_fit && draft.program_fit.text) items.push({ id: 'pf1', category: 'program_fit', text: draft.program_fit.text, evidence_quote: null, shared: true });
+  if (draft.parent_action) items.push({ id: 'pa1', category: 'parent_action', text: draft.parent_action, evidence_quote: null, shared: true });
+  if (draft.conversation_starter) items.push({ id: 'cq1', category: 'conversation_starter', text: draft.conversation_starter, evidence_quote: null, shared: true });
   window.previewItems = items;
   showScreen('preview');
   renderPreview(draft);
@@ -902,7 +914,7 @@ function renderPreview(draft) {
   const send = elem('button', 'btn btn-primary pv-send', 'Send to ' + parent);
   send.addEventListener('click', sendParentReport);
   const skip = elem('button', 'btn btn-ghost pv-skip', 'Don’t send anything');
-  skip.addEventListener('click', () => renderSent(false));
+  skip.addEventListener('click', declineShare);
   const row = elem('div', 'pv-send-row');
   row.appendChild(send); row.appendChild(skip);
   root.appendChild(row);
@@ -989,7 +1001,9 @@ function categoryLabel(cat) {
     money_judgment: 'Money decision skills',
     growth_horizon: 'Where you are → where you could be',
     confidence: 'How solid this read is',
-    program_fit: 'How OTS could help'
+    program_fit: 'How OTS could help',
+    parent_action: 'Your parent’s move this week',
+    conversation_starter: 'A question they can ask'
   })[cat] || 'Shared';
 }
 
