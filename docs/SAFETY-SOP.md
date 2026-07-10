@@ -82,4 +82,4 @@ Do not attempt to talk a teen through a crisis. Do not promise confidentiality.
 ## Status
 - ✅ In-conversation response (988/911, halt, block parent report) — live & validated
 - ✅ Responder alert routing (server detect → **direct email** via nodemailer, no disclosure, never to parent) — live & verified. Alerts go directly (NOT via Make), so the critical path has no no-code dependency; configured by `EMAIL_USER`/`EMAIL_PASS` (+ optional `SAFETY_ALERT_TO`). There is no safety webhook.
-- ⛔ The **[NEEDS COUNSEL]** items above — **required before public launch**
+- ⛔ The **[NEEDS COUNSEL]** items above — **required before public launch.** Enforced in code: `LAUNCH_MODE=production` makes `/api/health` report `ready:false` until `SAFETY_REVIEW_APPROVED=true` (and transcript archiving is off).
