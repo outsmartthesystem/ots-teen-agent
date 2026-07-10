@@ -43,6 +43,11 @@
     .check { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; color: var(--muted); margin: 20px 0 4px; line-height: 1.45; cursor: pointer; }
     .check input { width: auto; margin-top: 2px; flex: none; }
     .field-note { font-size: 12.5px; color: var(--accent-2); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; margin-top: 6px; line-height: 1.45; }
+    .info { margin-top: 28px; }
+    .info-block { padding: 14px 0; border-top: 1px solid var(--line); }
+    .info-block h3 { font-size: 14px; margin: 0 0 4px; color: var(--accent-2); }
+    .info-block p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.5; }
+    .info-note { margin-top: 14px; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; font-size: 13.5px; color: var(--text); line-height: 1.5; }
 
     /* Success state */
     .success { display: none; }
@@ -59,8 +64,8 @@
 <body>
   <div class="wrap">
     <div class="pill">Outsmart the System</div>
-    <h1>Set up the Teen Money &amp; Momentum Map</h1>
-    <p class="lede">A ~15–20 minute guided conversation that helps your teen see where they are with money, what they actually want, and what’s in the way.</p>
+    <h1>See what your teen actually wants — and what’s quietly getting in the way.</h1>
+    <p class="lede">The <strong>Teen Money &amp; Momentum Map</strong> gives your teen a private System Map, and gives you a teen-approved guide for how to support them — without nagging, lecturing, or taking over. About 15–20 minutes, on their own.</p>
 
     <div class="card">
       <!-- FORM -->
@@ -114,6 +119,15 @@
         <p class="fine">The link works for 30 days. The result is your teen’s; you’ll only receive what they choose to share.</p>
         <button class="again" id="againBtn">Set up another teen</button>
       </div>
+    </div>
+
+    <div class="info">
+      <div class="info-block"><h3>What your teen gets</h3><p>A private System Map — what they want, what’s already working, the one habit slowing them down, and one move to try this week.</p></div>
+      <div class="info-block"><h3>What you may receive</h3><p>Only what your teen approves, line by line: what matters to them, a strength, one skill to build, a conversation starter, and how they’d like your support.</p></div>
+      <div class="info-block"><h3>What you’ll never receive</h3><p>Their raw answers, anything they kept private, or anything safety-related. You’re never told what they left out.</p></div>
+      <div class="info-block"><h3>Why teens answer honestly</h3><p>Because it starts with them. They see their result first and control what’s shared — so they tell the truth instead of performing.</p></div>
+      <div class="info-block"><h3>What this is not</h3><p>Not a clinical evaluation, not a way to catch your teen, not a punishment tool, not a replacement for parenting, and not a financial-literacy quiz.</p></div>
+      <div class="info-note">One ask: don’t sit next to them or ask to see their raw answers. The value comes from honest ownership.</div>
     </div>
   </div>
 

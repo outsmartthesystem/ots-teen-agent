@@ -38,6 +38,8 @@ window.interviewComplete = false;
 window.skillsComplete = false;
 window.scoringResult = null;
 window.moneyJudgment = null;    // money_judgment from Prompt D, once the skills check runs
+window.decisionLabStatus = null; // 'pending' | 'completed' | 'skipped' — persisted server-side
+window.supportRequest = '';     // the teen's Family Handshake support line
 
 function activeHistory() { return window.mode === 'skills' ? skillsHistory : conversationHistory; }
 
@@ -115,6 +117,7 @@ async function recoverResult(session) {
         window.scoringResult = { teen_output: data.teen_output, level: data.level || {}, parent_report_draft: data.parent_report_draft || {} };
         window.moneyJudgment = data.money_judgment || null;
         window.skillsComplete = !!window.moneyJudgment;
+        window.decisionLabStatus = data.decision_lab_status || null;
         window.alreadyShared = !!data.report_sent;
         renderResult(window.scoringResult);
         return;
@@ -528,7 +531,11 @@ function showDecisionLabPrompt() {
   const add = elem('button', 'btn btn-primary dl-add', 'Keep going → 5 quick scenarios');
   add.addEventListener('click', startSkills);
   const skip = elem('button', 'btn btn-ghost dl-skip', 'I’d rather stop here and see my result');
-  skip.addEventListener('click', () => renderResult(window.scoringResult));
+  skip.addEventListener('click', () => {
+    window.decisionLabStatus = 'skipped';
+    try { fetch('/api/skills/skip', { method: 'POST' }).catch(() => {}); } catch (e) {}
+    renderResult(window.scoringResult);
+  });
   box.appendChild(add); box.appendChild(skip);
   root.appendChild(box);
   scrollResultTop();
@@ -581,6 +588,7 @@ function renderResult(parsed) {
 
   // 6) Money decisions (from the optional scenario check), if completed.
   if (window.moneyJudgment) root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
+  else if (window.decisionLabStatus === 'skipped' && !window.alreadyShared) root.appendChild(elem('p', 'confidence-note', 'Money decision skills were skipped — not included in this map. You can still add them below.'));
 
   // 7) High-scorer pathway.
   if (t.high_scorer_pathway) {
@@ -632,7 +640,7 @@ function buildNextSteps() {
     box.appendChild(elem('div', 'ns-status', '✓ You already shared this with ' + parent + '.'));
     const pdfStep = elem('div', 'ns-step');
     pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it as a PDF so you don’t lose it.'));
+    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
     const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
     pdfBtn.addEventListener('click', downloadResultPDF);
     pdfStep.appendChild(pdfBtn);
@@ -655,10 +663,14 @@ function buildNextSteps() {
 
   const pdfStep = elem('div', 'ns-step');
   pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it as a PDF so you don’t lose it.'));
+  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
   const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
   pdfBtn.addEventListener('click', downloadResultPDF);
   pdfStep.appendChild(pdfBtn);
+  const cardBtn = elem('button', 'btn btn-ghost ns-btn', '⤓  Save a shareable card');
+  cardBtn.style.marginTop = '8px';
+  cardBtn.addEventListener('click', downloadShareCard);
+  pdfStep.appendChild(cardBtn);
   box.appendChild(pdfStep);
 
   if (window.blockParentReport) {
@@ -926,7 +938,37 @@ function showPreview() {
   if (draft.conversation_starter) items.push({ id: 'cq1', category: 'conversation_starter', text: draft.conversation_starter, evidence_quote: null, shared: true });
   window.previewItems = items;
   showScreen('preview');
-  renderPreview(draft);
+  showHandshakeStep(draft); // first-class Family Handshake step, then the line-by-line preview
+}
+
+// ─── FAMILY HANDSHAKE (first-class step before the item preview) ──────────
+const HANDSHAKE_CHIPS = ['Ask before giving advice', 'Let me try first', 'Help me find resources', 'Check in once', 'Don’t make it a lecture'];
+function showHandshakeStep(draft) {
+  const root = document.getElementById('previewBody');
+  root.innerHTML = '';
+  const parent = window.session.parent_first_name;
+  root.appendChild(elem('h1', 'pv-h1', 'The Family Handshake'));
+  root.appendChild(elem('p', 'pv-intro', 'Before you choose what to share — how do you want ' + parent + ' to help with this, without taking it over? Tap what fits, add your own, or skip.'));
+  const chipsRow = elem('div', 'hs-chips');
+  const ta = document.createElement('textarea');
+  ta.id = 'hsSupport'; ta.className = 'pv-support-input'; ta.rows = 3;
+  ta.placeholder = 'e.g. “ask before stepping in,” “let me try first,” “help me set up the account”…';
+  if (window.supportRequest) ta.value = window.supportRequest;
+  HANDSHAKE_CHIPS.forEach(label => {
+    const b = elem('button', 'quick-chip', label); b.type = 'button';
+    b.addEventListener('click', () => {
+      const cur = ta.value.trim().replace(/[.\s]+$/, '');
+      ta.value = cur ? (cur + '. ' + label) : label;
+    });
+    chipsRow.appendChild(b);
+  });
+  root.appendChild(chipsRow);
+  root.appendChild(ta);
+  const next = elem('button', 'btn btn-primary pv-send', 'Next: choose what ' + parent + ' sees →');
+  next.style.marginTop = '16px';
+  next.addEventListener('click', () => { window.supportRequest = ta.value.trim(); renderPreview(draft); });
+  root.appendChild(next);
+  const s = document.getElementById('screen-preview'); if (s) s.scrollTop = 0;
 }
 
 function renderPreview(draft) {
@@ -957,6 +999,7 @@ function renderPreview(draft) {
   const srInput = document.createElement('textarea');
   srInput.id = 'pvSupport'; srInput.className = 'pv-support-input'; srInput.rows = 2;
   srInput.placeholder = 'e.g. “ask before stepping in,” “let me try first,” “help me set up the account”…';
+  if (window.supportRequest) srInput.value = window.supportRequest;
   sr.appendChild(srInput);
   root.appendChild(sr);
 
@@ -1308,7 +1351,10 @@ function buildResultPdfDoc() {
   // One System Map station: a dot marker + label + text (no raw numbers).
   function station(label, text, accent) {
     if (!text) return;
-    ensureSpace(15);
+    // Keep the label with its text — never orphan a label at a page bottom.
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+    const stLines = doc.splitTextToSize(String(text), W - 8);
+    ensureSpace(6 + stLines.length * 11 * PT * 1.16 + 5);
     doc.setDrawColor(accent[0], accent[1], accent[2]); doc.setLineWidth(0.5);
     doc.setFillColor(255, 255, 255); doc.circle(L + 2, y - 1.2, 1.9, 'FD');
     block(label, { size: 8.5, bold: true, color: [138, 147, 166], x: L + 8, width: W - 8, after: 1.5 });
@@ -1375,6 +1421,47 @@ function buildResultPdfDoc() {
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   doc.text('Outsmart the System  ·  outsmartthesystem.org  ·  ' + date, L, 291);
   return doc;
+}
+
+// ─── SHAREABLE CARD (teen-safe: name + goal + move + brand; no scores/quotes) ──
+// A social-friendly PNG the teen can share and OTS can screenshot for marketing —
+// deliberately excludes scores, evidence quotes, family/money-amount content.
+function downloadShareCard() {
+  const t = (window.scoringResult && window.scoringResult.teen_output) || {};
+  const W = 1080, H = 1350;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0c0f14'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#2f6df0'; g.fillRect(0, 0, W, 12);
+  g.textBaseline = 'top';
+  const wrap = (text, x, y, maxW, lh, font, color) => {
+    g.font = font; g.fillStyle = color;
+    const words = String(text || '').split(/\s+/); let line = ''; let yy = y;
+    words.forEach(w => {
+      const test = line ? line + ' ' + w : w;
+      if (g.measureText(test).width > maxW && line) { g.fillText(line, x, yy); line = w; yy += lh; }
+      else line = test;
+    });
+    if (line) g.fillText(line, x, yy);
+    return yy + lh;
+  };
+  const SANS = '-apple-system, Segoe UI, Roboto, sans-serif';
+  g.font = '600 34px ' + SANS; g.fillStyle = '#6fb3ff'; g.fillText('YOUR SYSTEM MAP', 90, 150);
+  let y = wrap((window.session.teen_first_name || 'Your') + '’s map is ready', 90, 205, W - 180, 82, '700 70px ' + SANS, '#e8eaed') + 60;
+  if (t.goal_reflected) {
+    g.font = '600 28px ' + SANS; g.fillStyle = '#8a93a6'; g.fillText('NORTH STAR', 90, y); y += 46;
+    y = wrap(t.goal_reflected, 90, y, W - 180, 52, '400 40px ' + SANS, '#e8eaed') + 50;
+  }
+  if (t.seven_day_move) {
+    g.font = '600 28px ' + SANS; g.fillStyle = '#8a93a6'; g.fillText('THIS WEEK’S MOVE', 90, y); y += 46;
+    wrap(t.seven_day_move, 90, y, W - 180, 52, '400 40px ' + SANS, '#6fd3a0');
+  }
+  g.font = '500 30px ' + SANS; g.fillStyle = '#8a93a6'; g.fillText('Powered by Outsmart the System', 90, H - 96);
+  try {
+    const a = document.createElement('a');
+    const safeName = (window.session.teen_first_name || 'result').replace(/[^a-z0-9]/gi, '') || 'result';
+    a.href = c.toDataURL('image/png'); a.download = 'OTS-System-Map-' + safeName + '.png'; a.click();
+  } catch (e) { console.error('share card error:', e); }
 }
 
 // ─── TRANSCRIPT (for scoring) ────────────────────────────────────────────

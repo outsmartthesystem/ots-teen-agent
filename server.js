@@ -517,8 +517,17 @@ app.get('/api/result', async (req, res) => {
     level: r.level || null,
     parent_report_draft: s.report_draft || null,
     money_judgment: r.money_judgment || null,
+    decision_lab_status: s.decision_lab_status || 'pending',
     report_sent: !!s.report_sent
   });
+});
+
+// Mark the Decision Lab explicitly skipped (persisted so recovery shows the note).
+app.post('/api/skills/skip', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  if (s.decision_lab_status === 'pending') await db.updateSession(s.id, { decision_lab_status: 'skipped' });
+  res.json({ ok: true });
 });
 
 // ─── SCORE (Prompt B, server-side) ─────────────────────────────────────────
@@ -655,6 +664,7 @@ app.post('/api/skills-score', async (req, res) => {
       await db.updateSession(session.id, { report_draft: draft, result: resultObj });
     }
     sendArchiveEmail(session, 'money scenarios', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
+    await db.updateSession(session.id, { decision_lab_status: 'completed' });
     res.json({ money_judgment: mj });
   } catch (e) {
     console.error('skills-score error:', e.message);
@@ -777,7 +787,7 @@ function buildParentEmail(report, teenName, parentName) {
   }
   t += 'Outsmart the System — outsmartthesystem.org\nApproved by ' + teenName + ' before sending.';
 
-  return { subject: `${teenName}'s Money & Momentum Map — what they chose to share`, html, text: t };
+  return { subject: `${teenName}'s Money & Momentum Snapshot — what they chose to share`, html, text: t };
 }
 
 // ─── SHARE DECLINE ("Keep this private" / "Don't send anything") ────────────
