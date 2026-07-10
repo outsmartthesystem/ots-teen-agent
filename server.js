@@ -274,6 +274,43 @@ async function currentSession(req) {
 // SHA-256 hex — we store only the HASH of an invite token, never the token itself.
 function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
 
+// ─── PAID-PASS (PR E: parent pays $47 upfront, then registers) ──────────────
+// A short-lived HMAC-signed cookie proving payment, set by /paid after Stripe
+// confirms the checkout. Registration requires it ONLY when PAYMENT_REQUIRED=true
+// (beta stays open). Single-use: cleared on a successful register.
+const PAID_COOKIE = 'ots_paid';
+function paypassSecret() { return process.env.PAYPASS_SECRET || process.env.MAKE_SHARED_SECRET || 'dev-insecure-paypass'; }
+function signPaidPass(expMs) { return expMs + '.' + crypto.createHmac('sha256', paypassSecret()).update(String(expMs)).digest('hex'); }
+function verifyPaidPass(val) {
+  if (!val) return false;
+  const i = String(val).indexOf('.');
+  if (i < 0) return false;
+  const expMs = String(val).slice(0, i), sig = String(val).slice(i + 1);
+  const expect = crypto.createHmac('sha256', paypassSecret()).update(expMs).digest('hex');
+  try { if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return false; }
+  catch (e) { return false; }
+  return Number(expMs) > Date.now();
+}
+function paidCookieFrom(req) { const m = (req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)' + PAID_COOKIE + '=([^;]+)')); return m ? m[1] : null; }
+function setPaidCookie(req, res) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const parts = [PAID_COOKIE + '=' + signPaidPass(Date.now() + 2 * 60 * 60 * 1000), 'HttpOnly', 'Path=/', 'SameSite=Lax', 'Max-Age=7200'];
+  if (secure) parts.push('Secure');
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+function clearPaidCookie(res) { res.setHeader('Set-Cookie', PAID_COOKIE + '=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax'); }
+// Verify a Stripe Checkout session was actually paid (needs STRIPE_SECRET_KEY).
+async function verifyStripeSession(sessionId) {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key || !sessionId) return null;
+  try {
+    const r = await fetch('https://api.stripe.com/v1/checkout/sessions/' + encodeURIComponent(sessionId), { headers: { Authorization: 'Bearer ' + key }, timeout: 10000 });
+    if (!r.ok) return null;
+    const s = await r.json();
+    return (s && s.payment_status === 'paid') ? s : null;
+  } catch (e) { console.warn('[STRIPE] session verify failed:', e.message); return null; }
+}
+
 // Direct mail transport for SAFETY alerts only (not the parent report, which
 // goes via Make). Safety is critical enough that it shouldn't depend on a
 // no-code tool's plan/uptime. Configured iff EMAIL_USER + EMAIL_PASS are set
@@ -376,10 +413,34 @@ function teenSafe(s) {
   };
 }
 
+// ─── CONFIG (client reads whether payment is required) ─────────────────────
+app.get('/api/config', (req, res) => {
+  res.json({ payment_required: process.env.PAYMENT_REQUIRED === 'true', payment_url: process.env.MAP_PAYMENT_URL || '' });
+});
+
+// ─── PAID (Stripe success redirect → verify → paid-pass cookie → register) ──
+// Configure the Stripe Payment Link's success URL to:
+//   {PUBLIC_BASE_URL}/paid?session_id={CHECKOUT_SESSION_ID}
+app.get('/paid', async (req, res) => {
+  const sessionId = req.query && req.query.session_id ? String(req.query.session_id) : '';
+  const required = process.env.PAYMENT_REQUIRED === 'true';
+  const paidSession = sessionId ? await verifyStripeSession(sessionId) : null;
+  const ok = !!paidSession || (!required && !!sessionId); // trust the return only when enforcement is off (beta)
+  if (ok) {
+    setPaidCookie(req, res);
+    const email = (paidSession && paidSession.customer_details && paidSession.customer_details.email) || '';
+    ga4Event('pay.' + (sessionId || 'anon'), 'map_purchase', { value: 47, currency: 'USD' });
+    if (email) ghlSync('map_purchase', { parent_email: email, parent_first_name: '', teen_first_name: '', teen_age: 0 }, 'map-paid');
+  }
+  res.redirect(303, '/register.html' + (ok ? '?paid=1' : '?payfail=1'));
+});
+
 // ─── REGISTER (parent) ─────────────────────────────────────────────────────
-// Creates an opaque server-side session and returns the teen's link (?s=<id>).
-// The id is unguessable random; the PII lives in the row, not the link.
+// Creates an opaque server-side session and returns the teen's link (a one-time
+// ?i= invite token). The session id is unguessable random and never in the link.
 app.post('/api/register', async (req, res) => {
+  // PR E: when payment is enforced, require a valid paid-pass (from /paid). Beta = open.
+  if (process.env.PAYMENT_REQUIRED === 'true' && !verifyPaidPass(paidCookieFrom(req))) return res.status(402).json({ error: 'payment required' });
   const { teen_first_name, teen_age, parent_first_name, parent_email, consent } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
@@ -403,6 +464,7 @@ app.post('/api/register', async (req, res) => {
   }
   ga4Event('sess.' + id, 'map_registered', { teen_age: age });
   ghlSync('map_registered', { parent_email: pEmail, parent_first_name: pName, teen_first_name: tName, teen_age: age }, 'map-registered');
+  clearPaidCookie(res); // single-use: one $47 payment = one teen setup
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
   res.json({ teen_url: `${base}/?i=${inviteToken}`, expires_at: Math.floor(expires_at / 1000) });
 });
@@ -1139,5 +1201,6 @@ module.exports = {
   buildApprovedItems, buildParentEmail,
   formatTranscript, stripUnverifiedQuotes, validateScoring, validScore,
   parseScoringJSON, phaseFor, interviewQuestionNum,
-  computeScoreMetadata, stageForTotal
+  computeScoreMetadata, stageForTotal,
+  signPaidPass, verifyPaidPass
 };

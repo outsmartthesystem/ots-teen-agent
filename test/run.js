@@ -168,6 +168,13 @@ test('stageForTotal: band boundaries', () => {
   eq(srv.stageForTotal(14), 'In Motion'); eq(srv.stageForTotal(18), 'Building');
   eq(srv.stageForTotal(22), 'Outsmarting');
 });
+test('paid-pass: valid round-trips; tamper + expiry + malformed rejected', () => {
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() + 60000)), true, 'fresh pass valid');
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() + 60000) + 'x'), false, 'tampered sig rejected');
+  eq(srv.verifyPaidPass(srv.signPaidPass(Date.now() - 1000)), false, 'expired rejected');
+  eq(srv.verifyPaidPass(''), false, 'empty rejected');
+  eq(srv.verifyPaidPass('nodot'), false, 'malformed rejected');
+});
 test('parseScoringJSON: fenced, plain, garbage', () => {
   eq(srv.parseScoringJSON('```json\n{"a":1}\n```').a, 1, 'fenced');
   eq(srv.parseScoringJSON('noise {"a":2} trailing').a, 2, 'embedded');

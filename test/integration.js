@@ -6,7 +6,8 @@
 'use strict';
 delete process.env.DATABASE_URL; // force the in-memory backend
 const assert = require('assert');
-const { app } = require('../server');
+const srv = require('../server');
+const app = srv.app;
 const db = require('../db');
 
 let pass = 0, fail = 0;
@@ -82,6 +83,17 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
     const h = await (await get('/api/health')).json();
     assert.strictEqual(h.mode, 'beta', 'default mode is beta');
     assert.strictEqual(h.ok, true, 'health ok');
+  });
+
+  await t('payment gate: register 402 without a paid pass, 200 with one (PAYMENT_REQUIRED)', async () => {
+    process.env.PAYMENT_REQUIRED = 'true';
+    try {
+      const blocked = await post('/api/register', REG);
+      assert.strictEqual(blocked.status, 402, 'no paid pass -> 402');
+      const passCookie = 'ots_paid=' + srv.signPaidPass(Date.now() + 60000);
+      const okReg = await fetch(B + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: passCookie }, body: JSON.stringify(REG) });
+      assert.strictEqual(okReg.status, 200, 'valid paid pass -> 200');
+    } finally { delete process.env.PAYMENT_REQUIRED; }
   });
 
   server.close();

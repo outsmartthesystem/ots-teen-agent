@@ -87,4 +87,21 @@
     submitBtn.textContent = 'Create my teen’s link';
     ['parentNameErr', 'parentEmailErr', 'teenNameErr', 'teenAgeErr'].forEach(id => showFieldError(id, false));
   });
+
+  // PR E: payment gate — when enabled, the parent pays upfront (Stripe) before
+  // the form is shown. Beta (payment_required=false) leaves the form open.
+  (async function initPayGate() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('payfail') === '1') { formError.textContent = 'Payment wasn’t confirmed. Try again, or contact us.'; formError.classList.add('show'); }
+    try {
+      const cfg = await (await fetch('/api/config')).json();
+      if (cfg.payment_required && params.get('paid') !== '1') {
+        const gate = document.getElementById('payGate');
+        const payBtn = document.getElementById('payBtn');
+        if (gate) gate.style.display = 'block';
+        form.style.display = 'none';
+        if (payBtn && cfg.payment_url) payBtn.onclick = function () { location.href = cfg.payment_url; };
+      }
+    } catch (e) { /* if config fails, leave the form visible (beta-safe) */ }
+  })();
 })();
