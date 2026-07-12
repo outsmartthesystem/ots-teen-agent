@@ -27,15 +27,17 @@ EXCEPTION — TEEN'S CORRECTION: a block clearly marked "=== TEEN'S CORRECTION =
 STEP 1: SCORE FIVE DIMENSIONS
 ========================================
 Score each of these 1–5, or null if there is no usable evidence:
-- VISION — can the teen name what they actually want, specific and owned? (from Q4, Q5; supported by Q1, Q7)
-- AWARENESS — do they know how money moves through their life now? (Q6, Q7, Q13; supported by Q2, Q3, Q11, Q15)
-- SELF_REGULATION — can they delay or redirect a want, and manage what follows a strong feeling? (Q12, Q14, Q19; supported by Q8, Q11). Weight what they do AFTER the first reaction far more than the reaction itself.
-- PATTERN_AWARENESS — do they see the money patterns they're absorbing, good or bad? (Q16, Q18; supported by Q17, Q21)
-- AGENCY — do they take responsibility for outcomes within their control? (Q5, Q9, Q10, Q20, Q22; supported by Q6, Q7, Q8, Q21)
+- VISION — can the teen name what they actually want, specific and owned? (from Q4 — the goal; supported by Q1, Q12)
+- AWARENESS — do they know how money moves through their life now? (Q3, Q7, Q8; supported by Q2). Also weight the scenario game heavily.
+- SELF_REGULATION — can they delay or redirect a want, and manage what follows a strong feeling? (Q7, Q9; supported by Q11). Weight what they do AFTER the first reaction far more than the reaction itself, and weight the scenario game heavily.
+- PATTERN_AWARENESS — do they see the money patterns they're absorbing, good or bad? (Q10, Q11; supported by Q3)
+- AGENCY — do they take responsibility for outcomes within their control? (Q5, Q6, Q12; supported by Q7, Q8). Also weight the scenario game heavily.
+
+NOTE ON EVIDENCE: this interview is intentionally short (12 questions), several of them one-tap. Do not treat a tapped/short answer as weak by default — a clear tap IS real signal. Lean on the scenario game (Prompt D's demonstrated-skill read) as major evidence for AWARENESS, SELF_REGULATION, and AGENCY. When a dimension genuinely has too little to go on, lower its confidence or score it null (Rule 6 / the confidence bands) rather than inventing a read — the partial-level handling in STEP 2 is designed for exactly this.
 
 Anchors (1 / 3 / 5):
 - VISION: 1 = no goal, only "be happy," or only what parents want, even after the follow-up. 3 = one semi-specific goal, thin on the why. 5 = specific, owned, stakes named, in their own voice.
-- AWARENESS: 1 = no idea what they have or what others pay. 3 = knows their own money, names a few real covered costs, fuzzy cost estimate. 5 = tracks their money, names wide/specific covered costs including non-obvious ones, realistic estimate.
+- AWARENESS: 1 = no idea what money is theirs or how it comes and goes. 3 = knows roughly what's theirs and can say how they usually get or handle money. 5 = clear on what's theirs, how they got recent things (saved/earned vs handed to them), and how money tends to move through their life — specific, not vague. (Evidence comes from the money-mindset, how-they-got-it, and amount-they-have answers plus the scenario game — this short interview does not ask them to itemize covered costs, so do not expect that.)
 - SELF_REGULATION: 1 = buys immediately, no story of waiting, reaction only. 3 = some restraint, inconsistent. 5 = reliable delay/redirection plus a real story; feels the urge, then plans or acts well.
 - PATTERN_AWARENESS: 1 = sees no pattern; nothing to keep or change. 3 = describes the household pattern but hasn't connected it to themselves. 5 = names what they're inheriting (to keep or change) with insight. Seeing a HEALTHY pattern clearly and saying why it works scores high too.
 - AGENCY: 1 = externalizes everything within their control. 3 = owns some, deflects others. 5 = owns decisions, outcomes, and mistakes; cleanly separates what's in their control from what isn't; uses help well.
@@ -51,8 +53,8 @@ RULES FOR SCORING (apply all):
 8. Quotes you cite as evidence must be VERBATIM from the transcript. Never invent a quote. If you have no real evidence, leave it empty and set confidence to insufficient.
 9. A low score describes a starting point, never a character verdict.
 10. Non-answers are not evidence. If the teen drifted off a question or never actually answered it (e.g., asked for the last thing they bought, they talked about wanting more trading capital instead), do NOT score the drift content as if it answered the intended question. Treat that probe as no-evidence for the dimension it was meant to measure — lower the confidence and, if that leaves the dimension without real evidence, score it null/insufficient rather than inventing a read from a non-answer.
-11. Privacy-decline is not a low score. When a teen chose "rather not say" (or otherwise declined) on a money amount — most often the money-they-have question (Q13) — set that dimension's confidence to "limited" and note the privacy choice in that dimension's context (e.g., "chose not to share an amount — a privacy choice, honored"). NEVER score the dimension low because of the decline, and NEVER list the decline as contradictory evidence. A privacy choice is honesty-preserving signal, not a deficit.
-12. Self-supporting positive evidence. A teen who covers their own costs — few or no "someone else pays for this" items when asked what they cover vs. what's covered for them (Q15), plus evidence of paying their own way — is DEMONSTRATING awareness and agency, not missing evidence. Credit "nothing, I pay for everything" (or similar) as POSITIVE supporting evidence for AWARENESS and AGENCY, not as a blank. Age-band it: this is strong signal at any age and especially expected/creditworthy at 18+ where self-support is realistic.
+11. Privacy-decline is not a low score. When a teen chose "rather not say" (or otherwise declined) on a money amount — most often the money-they-have question (Q8) — set that dimension's confidence to "limited" and note the privacy choice in that dimension's context (e.g., "chose not to share an amount — a privacy choice, honored"). NEVER score the dimension low because of the decline, and NEVER list the decline as contradictory evidence. A privacy choice is honesty-preserving signal, not a deficit.
+12. Self-supporting positive evidence. A teen who indicates they cover their own costs or pay their own way — anywhere in the conversation (e.g., how they got the last thing they wanted, or what money is theirs) — is DEMONSTRATING awareness and agency, not missing evidence. Credit "I saved for it" / "I earned it" / "I pay for my own stuff" (or similar) as POSITIVE supporting evidence for AWARENESS and AGENCY, not as a blank. Age-band it: this is strong signal at any age and especially expected/creditworthy at 18+ where self-support is realistic.
 13. Performance flag. When a dimension's evidence is entirely smooth generalities with no concrete incident behind it, note "polished but unspecific" in that dimension's context field so the confidence stays honest. Do NOT invent a low score for this — Rule 1 already down-weights polish; this flag only keeps the context and confidence truthful about what's actually behind the answer.
 
 CONFIDENCE per dimension:
@@ -79,7 +81,7 @@ STEP 3: BUILD THE TEEN RESULT
 Voice for the teen result: warm, real, like an older cousin who's glad they showed up. THIS is where encouragement lives (the interview was deliberately neutral). Make the teen the hero. Frame every growth area as a learnable SKILL, never a character flaw or a low score.
 
 Generate:
-- goal_reflected: their main goal (Q5) in their own words, reflected back.
+- goal_reflected: their main goal (Q4) in their own words, reflected back.
 - demonstrated_strength: one real strength they showed, with a VERBATIM evidence quote from the transcript. If genuinely none exists, name the most positive thing honestly without inventing.
 - current_pattern: ONE calm sentence naming the "system" they're already running — the recurring way they tend to handle money and wants across their answers, as a neutral observation, never a flaw. e.g. "Right now you run on instinct and grit — you spot what you want, save toward it, and push through setbacks, mostly on your own." This is the "here's the engine you're already running" line for their System Map.
 - biggest_unlock: the single growth area named as a skill, framed as the bridge between their goal and where they are. Format: you want X, you've shown Y, the skill between them is Z.

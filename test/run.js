@@ -146,9 +146,9 @@ test('validateScoring: accepts valid, rejects malformed, honors safety', () => {
 test('phaseFor: phase boundaries', () => {
   eq(srv.phaseFor(1), 'Arrival');
   eq(srv.phaseFor(4), 'What you want');
-  eq(srv.phaseFor(12), 'The reality check');
-  eq(srv.phaseFor(17), 'Family patterns');
-  eq(srv.phaseFor(21), 'The gap');
+  eq(srv.phaseFor(7), 'The reality check');
+  eq(srv.phaseFor(10), 'Family patterns');
+  eq(srv.phaseFor(12), 'The move');
 });
 test('computeScoreMetadata: 5 dims -> total + stage + canonical bars', () => {
   const p = { scoring: { vision:{score:4}, awareness:{score:3}, self_regulation:{score:4}, pattern_awareness:{score:3}, agency:{score:4} }, level:{}, profile:{}, teen_output:{ bars:[], stage_display:'' } };
@@ -174,11 +174,12 @@ test('stageForTotal: band boundaries', () => {
   eq(srv.stageForTotal(14), 'In Motion'); eq(srv.stageForTotal(18), 'Building');
   eq(srv.stageForTotal(22), 'Outsmarting');
 });
-test('QUESTION_REGISTRY: 22 questions, chips on the right ones, Q5 = goal', () => {
-  eq(srv.QUESTION_REGISTRY.length, 22, '22 questions');
-  eq(srv.QUESTION_REGISTRY.map(q => q.n).join(','), Array.from({ length: 22 }, (_, i) => i + 1).join(','), 'numbered 1..22');
-  [2, 3, 10, 13, 17].forEach(n => ok(srv.QUESTION_REGISTRY[n - 1].chips, 'Q' + n + ' has chips'));
-  ok(/matters most/.test(srv.QUESTION_REGISTRY[4].text), 'Q5 is the goal question');
+test('QUESTION_REGISTRY: 12 questions, chips on the right ones, Q4 = goal', () => {
+  eq(srv.QUESTION_REGISTRY.length, 12, '12 questions');
+  eq(srv.QUESTION_REGISTRY.map(q => q.n).join(','), Array.from({ length: 12 }, (_, i) => i + 1).join(','), 'numbered 1..12');
+  [2, 3, 5, 6, 7, 8, 10].forEach(n => ok(srv.QUESTION_REGISTRY[n - 1].chips, 'Q' + n + ' has chips'));
+  [1, 4, 9, 11, 12].forEach(n => eq(srv.QUESTION_REGISTRY[n - 1].chips, null, 'Q' + n + ' is free text'));
+  ok(/life to look like/.test(srv.QUESTION_REGISTRY[3].text), 'Q4 is the goal question');
 });
 test('parseInterviewMarker: ASKED / REPAIR / none', () => {
   eq(srv.parseInterviewMarker('hi [ASKED:Q7]').type, 'ASKED');
@@ -333,6 +334,20 @@ test('INTERVIEW_SUB: adult framing drops the parent opener; teen keeps it', () =
   ok(!adult.includes('{{SETUP_LINE}}') && !adult.includes('{{PRIVACY_FRAME_FAMILY}}'), 'adult: no placeholder leaks');
   // the SAFETY section is identical for both (abuse by a guardian still matters for a young adult)
   ok(/especially a parent or guardian/i.test(adult) && /especially a parent or guardian/i.test(teen), 'safety abuse line preserved in both modes');
+});
+test('chipsFor + GOAL_Q_RE: each question routes to the right chips; goal pins on Q4 only', () => {
+  // Every registry chip-question's canonical wording must trigger its chips.
+  srv.QUESTION_REGISTRY.forEach(q => {
+    const got = srv.chipsFor(q.text);
+    if (q.chips) eq(got, q.chips, 'Q' + q.n + ' text surfaces its chips');
+    else eq(got, null, 'Q' + q.n + ' (free text) surfaces no chips');
+  });
+  // Curly-apostrophe robustness (the model often outputs typographic quotes).
+  ok(srv.chipsFor('When money’s on your mind, what’s it usually about?'), 'Q3 chips fire with curly apostrophes');
+  ok(srv.chipsFor('So — how’d you get it?'), 'Q7 chips fire with a curly apostrophe');
+  // Goal pins ONLY off Q4's wording, not any other question.
+  ok(srv.GOAL_Q_RE.test(srv.QUESTION_REGISTRY[3].text), 'GOAL_Q_RE matches Q4');
+  srv.QUESTION_REGISTRY.filter(q => q.n !== 4).forEach(q => ok(!srv.GOAL_Q_RE.test(q.text), 'GOAL_Q_RE does NOT match Q' + q.n));
 });
 test('isAdultSession: 18+ is adult; 13–17 is teen', () => {
   [18, 19, 25, 40].forEach(a => eq(srv.isAdultSession({ teen_age: a }), true, 'adult ' + a));

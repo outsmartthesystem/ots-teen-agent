@@ -24,7 +24,7 @@ const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|EXPLOITATION|THREAT|SUP
 // Serious flags halt the interview, block the parent report, and are never persisted
 // or resumed on the device. SUPPORT/DISTRESS are not serious (interview continues).
 const SERIOUS_SAFETY = ['CRISIS', 'ABUSE', 'EXPLOITATION', 'THREAT'];
-const TOTAL_QUESTIONS = 22;      // v5: 22 interview turns (server-side count is authoritative)
+const TOTAL_QUESTIONS = 12;      // v5.1: 12 interview turns (server-side count is authoritative; this is the resume/fallback)
 const SESSION_KEY = 'ots_teen_session_v1';
 const SESSION_MAX_AGE_HOURS = 24;
 const SEED_MARKER = '__SEED_BEGIN__';           // hidden first user turn that triggers the opening frame

@@ -93,7 +93,7 @@ function validateScoring(p) {
 // scoring from its OWN stored transcript — the client never supplies the prompt
 // or the transcript, so neither can be tampered with.
 const SEED_MARKER = '__SEED_BEGIN__';
-const TOTAL_QUESTIONS = 22; // v5: was 16 — splits of the old double-barrels + 2 new questions
+const TOTAL_QUESTIONS = 12; // v5.1: tightened to a leaner tap-first 12 (was 22) — nuance moves into scoring (Prompt B) + the scenario game
 const COMPLETE_SENTINEL = '[INTERVIEW_COMPLETE]';
 const SKILLS_SENTINEL = '[SKILLS_COMPLETE]';
 const SAFETY_SENTINEL_RE = /\[SAFETY_EVENT:(CRISIS|ABUSE|EXPLOITATION|THREAT|SUPPORT)\]/;
@@ -120,13 +120,13 @@ function interviewQuestionNum(turns) {
 // Coarse phase label for the visible progress bar (the interview is model-paced,
 // so this is an approximate map, not a strict state machine).
 function phaseFor(q) {
-  // v5 phase map (22 questions): Arrival 1–3 · What You Want 4–10 ·
-  // The Reality Check 11–15 · Family Patterns 16–18 · The Gap 19–22.
+  // v5.1 phase map (12 questions): Arrival 1–3 · What You Want 4–6 ·
+  // The Reality Check 7–9 · Family Patterns 10–11 · The Move 12.
   if (q <= 3) return 'Arrival';
-  if (q <= 10) return 'What you want';
-  if (q <= 15) return 'The reality check';
-  if (q <= 18) return 'Family patterns';
-  return 'The gap';
+  if (q <= 6) return 'What you want';
+  if (q <= 9) return 'The reality check';
+  if (q <= 11) return 'Family patterns';
+  return 'The move';
 }
 
 // Quick-answer chips: when the model asks one of the list-style questions, offer
@@ -134,19 +134,24 @@ function phaseFor(q) {
 // chips only appear when the matching question is actually asked.
 const CHIP_SETS = [
   // Q2 — school/work status
-  { test: /school.*work|work.*school|year off/i, chips: ['In school', 'Working', 'Both', 'Taking time off'] },
-  // Q3 — how they think about money (multi-select ok; free text always open)
-  { test: /money's on your mind|what's it usually about/i, chips: ['Curiosity', 'Planning ahead', 'Wanting things', 'Stress', 'Barely think about it'] },
-  // Q10 — control split (in-control vs not)
-  { test: /actually up to you/i, chips: ['Mostly me', 'Mostly not up to me', 'Honestly both'] },
-  // Q13 — money-amount ranges, with an honesty-preserving "Rather not say"
+  { test: /school.*work|work.*school|year off|doing right now/i, chips: ['In school', 'Working', 'Both', 'Taking time off', 'Figuring it out'] },
+  // Q3 — how they think about money (multi-select ok; free text always open).
+  // `.` in place of the apostrophe so straight OR curly (' / ’) both match.
+  { test: /money.s on your mind|what.s it usually about/i, chips: ['Curiosity', 'Planning ahead', 'Wanting things', 'Stress', 'Barely think about it'] },
+  // Q5 — biggest obstacle to the goal
+  { test: /biggest thing standing|standing between you/i, chips: ['Money', 'Skills or know-how', 'The right people', 'Time', 'Haven’t started', 'Something else'] },
+  // Q6 — control split (in-control vs not)
+  { test: /actually on you|actually up to you/i, chips: ['Mostly me', 'Mostly not up to me', 'Honestly both'] },
+  // Q7 — how they got the last thing they wanted
+  { test: /last thing you wanted|how.?d you get it/i, chips: ['Saved for it', 'Earned money for it', 'Asked a parent', 'Just bought it', 'Didn’t get it'] },
+  // Q8 — money-amount ranges, with an honesty-preserving "Rather not say"
   { test: /how much money is actually yours|money is actually yours/i, chips: ['Under $50', '$50–250', '$250–1,000', 'Over $1,000', 'Rather not say'] },
-  // Q17 — home money climate
-  { test: /sound most like home/i, chips: ['Planned & talked about openly', 'Mostly avoided', 'Spent pretty freely', 'Saved really cautiously', 'Often stressful or tense', 'Different depending on the adult'] }
+  // Q10 — home money climate
+  { test: /money vibe|sound(?:s)? most like home|where you grew up/i, chips: ['Planned & talked about openly', 'Mostly avoided', 'Spent pretty freely', 'Saved really cautiously', 'Often stressful or tense', 'Different depending on the adult'] }
 ];
 function chipsFor(msg) { const f = CHIP_SETS.find(c => c.test.test(String(msg || ''))); return f ? f.chips : null; }
-// The goal-priority question — the teen's NEXT answer becomes the pinned goal chip.
-const GOAL_Q_RE = /matters most|which one matters|of those three/i;
+// The goal question (Q4) — the teen's NEXT answer becomes the pinned goal chip.
+const GOAL_Q_RE = /life to look like|what you want your life/i;
 
 // ─── DETERMINISTIC INTERVIEW (D1 — flag-gated: DETERMINISTIC_INTERVIEW=true) ──
 // Server-owned question sequencing. Instead of the model choosing the next
@@ -159,30 +164,20 @@ const GOAL_Q_RE = /matters most|which one matters|of those three/i;
 // byte-identical. OFF by default; the live flow uses the model-paced path.
 const QUESTION_REGISTRY = [
   { n: 1, phase: 'Arrival', text: "I've got you as {{AGE}} — that right? And what's something you're actually into right now that people wouldn't guess?", followup: "If they only confirm their age, ask once (lightly) for the one thing.", chips: null },
-  { n: 2, phase: 'Arrival', text: "What are you doing right now — school, working, both, a year off, something else?", followup: null, chips: ['In school', 'Working', 'Both', 'Taking time off'] },
+  { n: 2, phase: 'Arrival', text: "What are you doing right now — school, working, both, a year off, something else?", followup: null, chips: ['In school', 'Working', 'Both', 'Taking time off', 'Figuring it out'] },
   { n: 3, phase: 'Arrival', text: "When money's on your mind, what's it usually about? Tap whatever fits, or say it your own way.", followup: null, chips: ['Curiosity', 'Planning ahead', 'Wanting things', 'Stress', 'Barely think about it'] },
-  { n: 4, phase: 'What you want', text: "Three years from now — for a 13–14-year-old use a nearer horizon like 'by the end of next school year' — what would you genuinely want your life to look like? Two or three things that would matter.", followup: "If fully vague, ask once for something concrete — a thing, a place, a job, a relationship.", chips: null },
-  { n: 5, phase: 'What you want', text: "Of those, which one matters most right now — and what would having it actually change for you?", followup: "If they can't choose, ask once for the one that would make the rest feel closer.", chips: null },
-  { n: 6, phase: 'What you want', text: "What would it take to make that real — money, skills, time, permission, people who can help, something else?", followup: null, chips: null },
-  { n: 7, phase: 'What you want', text: "Of those, which piece is the biggest — the one that most decides whether it happens?", followup: "ONLY if they name money as the biggest piece, ask once for a rough ballpark; accept any number without correcting it.", chips: null },
-  { n: 8, phase: 'What you want', text: "You said [their goal] matters most — have you actually started on it yet, even something small, or is something getting in the way of starting?", followup: null, chips: null },
-  { n: 9, phase: 'What you want', text: "What's actually standing between you and that?", followup: "If the obstacle is vague or one word, ask ONE clarifier offering concrete options, then move on.", chips: null },
-  { n: 10, phase: 'What you want', text: "That thing in your way — how much of it is actually up to you right now?", followup: null, chips: ['Mostly me', 'Mostly not up to me', 'Honestly both'] },
-  { n: 11, phase: 'The reality check', text: "What's the last thing you decided you really wanted — and how'd you get it? Did you buy it, ask someone to buy it, save for it, or get it another way?", followup: "If they answer about something else, use the one repair to ask for the concrete last thing.", chips: null },
-  { n: 12, phase: 'The reality check', text: "Roughly how much was it — and what made you decide it was worth it?", followup: null, chips: null },
-  { n: 13, phase: 'The reality check', text: "Roughly how much money is actually yours right now — to spend or save? A ballpark's fine, and you can skip it.", followup: "'Rather not say' is a completely fine answer — never push for an exact figure.", chips: ['Under $50', '$50–250', '$250–1,000', 'Over $1,000', 'Rather not say'] },
-  { n: 14, phase: 'The reality check', text: "What's something you got or bought that you later wished you hadn't? What happened after?", followup: "If they can't think of one, don't push.", chips: null },
-  { n: 15, phase: 'The reality check', text: "What do you cover for yourself these days, and what still gets covered by someone else?", followup: null, chips: null },
-  { n: 16, phase: 'Family patterns', text: "In the household or households you spend time in, what would I notice about how money gets talked about? If it's different at different places, that's a normal answer — tell me about both.", followup: null, chips: null },
-  { n: 17, phase: 'Family patterns', text: "Which one or two sound most like home? Tap what fits, or tell me in your own words.", followup: null, chips: ['Planned & talked about openly', 'Mostly avoided', 'Spent pretty freely', 'Saved really cautiously', 'Often stressful or tense', 'Different depending on the adult'] },
-  { n: 18, phase: 'Family patterns', text: "Someday when the money's yours to run — one money habit from around you you'd want in your own place, and one you'd run differently?", followup: null, chips: null },
-  { n: 19, phase: 'The gap', text: "When you really want something and can't have it, what's your first reaction — and what do you usually do next?", followup: null, chips: null },
-  { n: 20, phase: 'The gap', text: "Tell me about a time you worked toward something you wanted — even if someone helped, and even if it wasn't about money. What part did you handle?", followup: "If they can't think of one, don't push.", chips: null },
-  { n: 21, phase: 'The gap', text: "If the next three years looked a lot like the last six months — what probably happens with [their main goal]?", followup: "If they answer with a hope instead of a projection, make ONE short repair naming the honest projection you're after. If the answer reads as genuine hopelessness, switch to the SAFETY rules.", chips: null },
-  { n: 22, phase: 'The gap', text: "And what's one move that could change that picture?", followup: null, chips: null }
+  { n: 4, phase: 'What you want', text: "Three years from now — for a 13–14-year-old use a nearer horizon like 'by the end of next school year' — what would you genuinely want your life to look like? Give me the real one, not the school-answer.", followup: "If fully vague, ask once for something concrete — a thing, a place, a job, a relationship. No 'which matters most' follow-up.", chips: null },
+  { n: 5, phase: 'What you want', text: "What's the biggest thing standing between you and that?", followup: "Take the tap/answer and move on — never drill into 'what part specifically.'", chips: ['Money', 'Skills or know-how', 'The right people', 'Time', 'Haven’t started', 'Something else'] },
+  { n: 6, phase: 'What you want', text: "That thing — how much of it is actually on you right now?", followup: null, chips: ['Mostly me', 'Mostly not up to me', 'Honestly both'] },
+  { n: 7, phase: 'The reality check', text: "Last thing you wanted bad enough to actually do something about it — how'd you get it?", followup: "If they add the story, let it land — but don't drill for it.", chips: ['Saved for it', 'Earned money for it', 'Asked a parent', 'Just bought it', 'Didn’t get it'] },
+  { n: 8, phase: 'The reality check', text: "Real talk — roughly how much money is actually yours right now, to spend or save? A ballpark's fine, and you can skip it.", followup: "'Rather not say' is a completely fine answer — never push for an exact figure.", chips: ['Under $50', '$50–250', '$250–1,000', 'Over $1,000', 'Rather not say'] },
+  { n: 9, phase: 'The reality check', text: "Ever spent money in a way you later wished you hadn't? What happened after?", followup: "If they can't think of one, don't push.", chips: null },
+  { n: 10, phase: 'Family patterns', text: "The money vibe where you grew up — which of these sounds most like home? Tap what fits, or say it your own way.", followup: null, chips: ['Planned & talked about openly', 'Mostly avoided', 'Spent pretty freely', 'Saved really cautiously', 'Often stressful or tense', 'Different depending on the adult'] },
+  { n: 11, phase: 'Family patterns', text: "Someday when the money's yours to run — one money habit from around you you'd want in your own place, or one you'd run differently?", followup: "Keep, change, or both — never force both. No praise. Take it and move.", chips: null },
+  { n: 12, phase: 'The move', text: "One move in the next month that'd actually get you closer to [their main goal]?", followup: null, chips: null }
 ];
 function questionByN(n) { return QUESTION_REGISTRY.find(q => q.n === n) || null; }
-const GOAL_QUESTION_N = 5;
+const GOAL_QUESTION_N = 4;
 
 // Build the deterministic per-turn anchor: ask EXACTLY the next server-chosen
 // question (in the model's own warm voice), honor the prior question's one-time
@@ -1542,5 +1537,5 @@ module.exports = {
   signPaidPass, verifyPaidPass, sessionEntitles,
   QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker,
   buildSafetyEmail, scoringSafetyFlag, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE,
-  isAdultSession, buildSelfEmail, INTERVIEW_SUB
+  isAdultSession, buildSelfEmail, INTERVIEW_SUB, chipsFor, GOAL_Q_RE
 };

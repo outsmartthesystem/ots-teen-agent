@@ -1,7 +1,7 @@
 // Replay harness for the deterministic interview path (D1). Boots the app with
 // DETERMINISTIC_INTERVIEW=true and a STUBBED model that echoes the server-anchored
 // [ASKED:Qn] marker, then drives a full interview and asserts the server served
-// Q1..Q22 in order (no repeats/skips), surfaced chips on the right questions,
+// Q1..Q12 in order (no repeats/skips), surfaced chips on the right questions,
 // pinned the goal after the goal question, stripped the markers, and completed.
 //   node test/interview-deterministic.js   (run WITHOUT DATABASE_URL)
 'use strict';
@@ -47,7 +47,7 @@ function cookieFrom(res) { const sc = res.headers.get('set-cookie') || ''; const
   const B = 'http://localhost:' + server.address().port;
   const post = (path, body, cookie) => fetch(B + path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, cookie ? { Cookie: cookie } : {}), body: JSON.stringify(body || {}) });
 
-  await t('deterministic interview serves Q1..Q22 in order, with chips + goal + completion, markers stripped', async () => {
+  await t('deterministic interview serves Q1..Q12 in order, with chips + goal + completion, markers stripped', async () => {
     const reg = await post('/api/register', { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 'T', teen_age: 15, consent: true });
     const token = new URL((await reg.json()).teen_url).searchParams.get('i');
     const cookie = cookieFrom(await post('/api/session/start', { i: token }));
@@ -65,10 +65,10 @@ function cookieFrom(res) { const sc = res.headers.get('set-cookie') || ''; const
       if (data.chips && data.chips.length) chipsAt[data.progress.q] = data.chips.length;
       if (data.goal) goalSeen = true;
     }
-    assert.deepStrictEqual(served, Array.from({ length: 22 }, (_, k) => k + 1), 'served Q1..Q22 in order (no skips/repeats)');
-    assert.ok(completed, 'interview completes after Q22');
-    [2, 3, 10, 13, 17].forEach(n => assert.ok(chipsAt[n] > 0, 'chips surfaced on Q' + n));
-    assert.ok(goalSeen, 'goal pinned after the goal question (Q5)');
+    assert.deepStrictEqual(served, Array.from({ length: 12 }, (_, k) => k + 1), 'served Q1..Q12 in order (no skips/repeats)');
+    assert.ok(completed, 'interview completes after Q12');
+    [2, 3, 5, 6, 7, 8, 10].forEach(n => assert.ok(chipsAt[n] > 0, 'chips surfaced on Q' + n));
+    assert.ok(goalSeen, 'goal pinned after the goal question (Q4)');
   });
 
   server.close();
