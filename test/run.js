@@ -321,6 +321,36 @@ test('scoringSafetyFlag: recognized flags honored; missing/garbled fails CLOSED 
   ok(srv.SAFETY_BLOCK_FLAGS.has(srv.scoringSafetyFlag({ flag: 'garbage' })), 'the fail-closed default actually blocks the report');
 });
 
+test('INTERVIEW_SUB: adult framing drops the parent opener; teen keeps it', () => {
+  const base = { teen_first_name: 'Sam', parent_first_name: 'Pat', teen_age: 15 };
+  const teen = srv.INTERVIEW_SUB(base);
+  ok(teen.includes('Their parent or guardian, Pat, set this up'), 'teen: parent opener present + name substituted');
+  ok(!teen.includes('{{SUBJECT_NOUN}}') && !teen.includes('{{SETUP_LINE}}') && !teen.includes('{{PRIVACY_FRAME_MONEY}}'), 'teen: no unresolved framing placeholders');
+  const adult = srv.INTERVIEW_SUB(Object.assign({}, base, { teen_age: 24 }));
+  ok(adult.includes('set this Map up for themselves'), 'adult: self-setup framing');
+  ok(!adult.includes('Their parent or guardian, Pat, set this up'), 'adult: teen opener gone');
+  ok(!adult.includes('not your parent'), 'adult: privacy reframes de-parented');
+  ok(!adult.includes('{{SETUP_LINE}}') && !adult.includes('{{PRIVACY_FRAME_FAMILY}}'), 'adult: no placeholder leaks');
+  // the SAFETY section is identical for both (abuse by a guardian still matters for a young adult)
+  ok(/especially a parent or guardian/i.test(adult) && /especially a parent or guardian/i.test(teen), 'safety abuse line preserved in both modes');
+});
+test('isAdultSession: 18+ is adult; 13–17 is teen', () => {
+  [18, 19, 25, 40].forEach(a => eq(srv.isAdultSession({ teen_age: a }), true, 'adult ' + a));
+  [13, 15, 17].forEach(a => eq(srv.isAdultSession({ teen_age: a }), false, 'teen ' + a));
+  eq(srv.isAdultSession(null), false, 'null -> not adult');
+});
+test('buildSelfEmail: adult own-copy from teen_output; self-framed, no parent language', () => {
+  const t = { goal_reflected: 'save for a car', demonstrated_strength: { text: 'you track spending' }, current_pattern: 'you wing it', biggest_unlock: { skill: 'planning', framing: 'plan weekly' }, seven_day_move: 'set one goal', stage_display: 'Building' };
+  const e = srv.buildSelfEmail(t, 'Sam');
+  ok(/Your Money & Momentum Map/i.test(e.subject) && e.subject.includes('Sam'), 'self-titled + personalized');
+  ok(e.html.includes('save for a car') && e.text.includes('set one goal'), 'their map content present');
+  ok(!/parent|approved by|handshake/i.test(e.text), 'no parent/veto framing');
+});
+test('buildSelfEmail: null/empty result still returns valid email parts', () => {
+  const e = srv.buildSelfEmail(null, 'Sam');
+  ok(e.subject && e.html && e.text, 'no crash on empty');
+});
+
 (async () => {
   for (const t of queue) {
     try { await t.fn(); console.log('  ✓ ' + t.name); pass++; }

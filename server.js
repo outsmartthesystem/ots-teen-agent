@@ -350,11 +350,35 @@ function computeScoreMetadata(parsed) {
   return parsed;
 }
 
-const INTERVIEW_SUB = (s) => SERVER_PROMPTS.A
-  .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
-  .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
-  .split('{{TEEN_AGE_PLUS_3}}').join(String(s.teen_age + 3))
-  .split('{{TEEN_AGE}}').join(String(s.teen_age));
+// Teen vs adult FRAMING for the interview. The safety section of Prompt A is
+// identical for both; only these framing lines are parameterized so an 18+
+// self-signup user isn't addressed as a teenager whose parent set it up.
+const INTERVIEW_FRAMES = {
+  teen: {
+    SUBJECT_NOUN: 'a teenager',
+    SETUP_LINE: 'Their parent or guardian, {{PARENT_FIRST_NAME}}, set this up.',
+    PRIVACY_FRAME_MONEY: "Quick reminder — this part's for your map, not your parent's. Nothing reaches them unless you approve it later. Now let's look at where you actually are — the day-to-day, not the dream.",
+    PRIVACY_FRAME_FAMILY: "Same deal as before — this next part's for your map, not your parent's; nothing reaches them unless you approve it. Just a few on the family side, then we're into the home stretch. This part actually matters for what you want."
+  },
+  adult: {
+    SUBJECT_NOUN: 'someone',
+    SETUP_LINE: 'They set this Map up for themselves — there is no parent involved, and no report goes to anyone else.',
+    PRIVACY_FRAME_MONEY: "Quick reminder — this is your own map; it's private to you. Now let's look at where you actually are — the day-to-day, not the dream.",
+    PRIVACY_FRAME_FAMILY: "Same idea as before — this is your own map, private to you. Just a few on the family/household side (how money worked growing up shapes a lot), then we're into the home stretch. This part actually matters for what you want."
+  }
+};
+const INTERVIEW_SUB = (s) => {
+  const F = isAdultSession(s) ? INTERVIEW_FRAMES.adult : INTERVIEW_FRAMES.teen;
+  return SERVER_PROMPTS.A
+    .split('{{SUBJECT_NOUN}}').join(F.SUBJECT_NOUN)
+    .split('{{SETUP_LINE}}').join(F.SETUP_LINE)
+    .split('{{PRIVACY_FRAME_MONEY}}').join(F.PRIVACY_FRAME_MONEY)
+    .split('{{PRIVACY_FRAME_FAMILY}}').join(F.PRIVACY_FRAME_FAMILY)
+    .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
+    .split('{{PARENT_FIRST_NAME}}').join(s.parent_first_name)
+    .split('{{TEEN_AGE_PLUS_3}}').join(String(s.teen_age + 3))
+    .split('{{TEEN_AGE}}').join(String(s.teen_age));
+};
 const SKILLS_SUB = (s) => SERVER_PROMPTS.C
   .split('{{TEEN_FIRST_NAME}}').join(s.teen_first_name)
   .split('{{TEEN_AGE}}').join(String(s.teen_age))
@@ -545,12 +569,19 @@ app.use('/api/', (req, res, next) => {
 
 // Teen-facing session fields. parent_email is NEVER returned — it lives only in
 // the server-side row and is read directly from there when the report sends.
+// A session is in ADULT (self-signup) mode when the registered age is 18+. Teens
+// (13–17) keep the two-party parent-setup flow; adults are one person who set the
+// Map up for themselves — no parent, no parent report. Derived from age so there's
+// no extra column and the boundary is enforced at register + confirm-age.
+function isAdultSession(s) { return Number(s && s.teen_age) >= 18; }
+
 function teenSafe(s) {
   return {
     teen_first_name: s.teen_first_name,
     teen_age: s.teen_age,
     teen_age_plus_3: s.teen_age + 3, // pre-computed: the model is unreliable at arithmetic
     parent_first_name: s.parent_first_name,
+    is_adult: isAdultSession(s),
     interview_complete: !!s.interview_complete,
     report_sent: !!s.report_sent,
     safety_blocked: !!s.safety_blocked
@@ -599,7 +630,10 @@ app.post('/api/register', async (req, res) => {
   if (tName.length < 1 || tName.length > 40) return res.status(400).json({ error: 'teen_first_name required (1–40 chars)' });
   if (pName.length < 1 || pName.length > 40) return res.status(400).json({ error: 'parent_first_name required (1–40 chars)' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pEmail)) return res.status(400).json({ error: 'valid parent_email required' });
-  if (!Number.isInteger(age) || age < 13 || age > 17) return res.status(400).json({ error: 'age must be an integer 13–17 (18+ needs the Young Adult Map)' });
+  // COPPA floor stays hard at 13. 13–17 = teen (parent-setup); 18+ = adult
+  // (self-signup). Mode is derived from age (isAdultSession), so the one endpoint
+  // serves both; the entry page routes the person by the age they pick.
+  if (!Number.isInteger(age) || age < 13 || age > 99) return res.status(400).json({ error: 'age must be an integer 13 or older (under 13 is not eligible)' });
   if (consent !== true) return res.status(400).json({ error: 'consent required' });
 
   const id = crypto.randomBytes(24).toString('base64url');
@@ -635,18 +669,21 @@ app.post('/api/session/start', async (req, res) => {
 });
 
 // ─── CONFIRM AGE (deterministic; gate BEFORE the interview) ─────────────────
-// The interview can't start until the teen confirms/corrects their age. Under-13
-// (COPPA) and 18+ (needs the Young Adult Map) are purged and routed out. Age
-// gating is deterministic here — never left to the model.
+// The interview can't start until the person confirms/corrects their age. Under-13
+// (COPPA) is always purged. The rest is lane-enforced against the registered mode:
+// a teen link (13–17) rejects a self-attested 18+, and an adult link (18+) rejects
+// a self-attested under-18. Age gating is deterministic here — never left to the model.
 app.post('/api/session/confirm-age', async (req, res) => {
   const s = await currentSession(req);
   if (!s) return res.status(401).json({ error: 'no active session' });
   const age = Number(req.body && req.body.age);
   if (!Number.isInteger(age) || age < 5 || age > 120) return res.status(400).json({ error: 'a valid age is required' });
   if (age < 13) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'under_13' }); }
-  if (age > 17) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'adult' }); }
+  const adultLink = isAdultSession(s);
+  if (adultLink && age < 18) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'need_adult' }); }
+  if (!adultLink && age > 17) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'adult' }); }
   await db.updateSession(s.id, { teen_age: age, teen_age_confirmed_at: new Date() });
-  res.json({ ok: true, teen_age: age });
+  res.json({ ok: true, teen_age: age, is_adult: age >= 18 });
 });
 
 // ─── SESSION (current, via cookie) ─────────────────────────────────────────
@@ -1057,6 +1094,42 @@ function buildParentEmail(report, teenName, parentName) {
   return { subject: `${teenName}'s Money & Momentum Snapshot — what they chose to share`, html, text: t };
 }
 
+// Adult self-copy email: an 18+ user emailing THEMSELVES their own Money & Momentum
+// Map. Built from their stored teen_output (their full result) — no parent, no veto,
+// no "approved by" framing. `t` is session.result.teen_output.
+function buildSelfEmail(t, firstName) {
+  t = t || {};
+  const str = t.demonstrated_strength || {};
+  const unlock = t.biggest_unlock || {};
+  const rows = [
+    ['Your North Star', t.goal_reflected],
+    ['What’s already working', str.text],
+    ['The system you’re running', t.current_pattern],
+    ['The friction', unlock.skill ? ('The one skill slowing your momentum right now: ' + unlock.skill + '.') : ''],
+    ['The lever', unlock.framing],
+    ['Your 7-day move', t.seven_day_move]
+  ].filter(r => r[1]);
+
+  let h = '';
+  h += `<p>Hi ${escHtml(firstName)},</p>`;
+  h += `<p>Here’s your Money &amp; Momentum Map — the one you just completed. It’s yours; keep it somewhere you’ll see it.</p>`;
+  if (t.stage_display) h += `<p style="margin:14px 0"><span style="display:inline-block;font-size:12px;font-weight:600;background:#eef3ff;color:#2f6df0;padding:4px 12px;border-radius:999px">${escHtml(t.stage_display)}</span></p>`;
+  rows.forEach(([label, val]) => {
+    h += `<div style="margin:14px 0;padding:12px 16px;border-left:3px solid #2f6df0;background:#f6f9ff;border-radius:0 8px 8px 0">`;
+    h += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#8a93a6;margin-bottom:5px">${escHtml(label)}</div>`;
+    h += `<div>${escHtml(val)}</div></div>`;
+  });
+  h += `<p style="font-size:12px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:12px">Outsmart the System &middot; outsmartthesystem.org<br>This is your own snapshot — it wasn’t shared with anyone.</p>`;
+  const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a;line-height:1.55;font-size:15px">${h}</div>`;
+
+  let txt = `Hi ${firstName},\n\nHere’s your Money & Momentum Map — the one you just completed. It’s yours.\n\n`;
+  if (t.stage_display) txt += t.stage_display + '\n\n';
+  rows.forEach(([label, val]) => { txt += label.toUpperCase() + '\n' + val + '\n\n'; });
+  txt += 'Outsmart the System — outsmartthesystem.org\nThis is your own snapshot — it wasn’t shared with anyone.';
+
+  return { subject: `Your Money & Momentum Map, ${firstName}`, html, text: txt };
+}
+
 // ─── SHARE DECLINE ("Keep this private" / "Don't send anything") ────────────
 // Durable private decision: block any future parent-report send, drop the stored
 // report draft + transcript, clear the cookie. Survives reopen via sharing_status.
@@ -1136,6 +1209,53 @@ app.post('/api/parent-report', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Parent-report webhook error:', err.message);
+    await db.updateSession(s.id, { report_sent: false });
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ─── SELF REPORT (adult self-signup: email me my own copy) ──────────────────
+// An 18+ user emails their OWN Map to their OWN address. No parent, no veto —
+// their full result. Same durable guards as the teen path: safety-blocked never
+// sends, and it sends at most once (atomic claim). Teen sessions are rejected —
+// they use /api/parent-report (the teen-controlled, veto-gated flow).
+app.post('/api/self-report', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  if (!isAdultSession(s)) return res.status(400).json({ error: 'not an adult session' });
+  if (s.safety_blocked) { console.warn('[SELF_REPORT_BLOCKED] safety sid=' + s.id); return res.json({ success: true }); }
+  if (s.sharing_status !== 'pending') { console.warn('[SELF_REPORT_BLOCKED] sharing_status=' + s.sharing_status + ' sid=' + s.id); return res.json({ success: true }); }
+
+  const result = s.result && s.result.teen_output;
+  if (!result) return res.status(400).json({ error: 'no result to send yet' });
+  const webhook = process.env.TEEN_MAKE_WEBHOOK_URL;
+  if (!webhook) return res.status(500).json({ error: 'Server not configured: TEEN_MAKE_WEBHOOK_URL missing' });
+
+  const claimed = await db.claimReportSend(s.id); // atomic, one-time, honors safety block
+  if (!claimed) { console.warn('[SELF_REPORT_DUP_OR_BLOCKED] sid=' + s.id); return res.json({ success: true }); }
+
+  const email = buildSelfEmail(result, s.teen_first_name);
+  const out = {
+    auth: process.env.MAKE_SHARED_SECRET || '',
+    sid: s.id,
+    parent_email: s.parent_email,           // the adult's own address
+    parent_first_name: s.teen_first_name,
+    teen_first_name: s.teen_first_name,
+    email_subject: email.subject,
+    email_html: email.html,
+    sent_at: new Date().toISOString()
+  };
+  try {
+    const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out), timeout: 15000 });
+    if (!r.ok) {
+      console.error('Self-report webhook non-OK:', r.status);
+      await db.updateSession(s.id, { report_sent: false });
+      return res.status(502).json({ error: 'webhook rejected', status: r.status });
+    }
+    ga4Event('sess.' + s.id, 'map_self_copy_sent', {});
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Self-report webhook error:', err.message);
     await db.updateSession(s.id, { report_sent: false });
     res.status(502).json({ error: err.message });
   }
@@ -1421,5 +1541,6 @@ module.exports = {
   computeScoreMetadata, stageForTotal,
   signPaidPass, verifyPaidPass, sessionEntitles,
   QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker,
-  buildSafetyEmail, scoringSafetyFlag, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE
+  buildSafetyEmail, scoringSafetyFlag, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE,
+  isAdultSession, buildSelfEmail, INTERVIEW_SUB
 };

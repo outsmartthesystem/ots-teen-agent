@@ -36,11 +36,38 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
     assert.strictEqual(s2.status, 410, 'second claim of the same link -> 410');
   });
 
-  await t('register rejects 18+ and missing consent', async () => {
-    const adult = await post('/api/register', Object.assign({}, REG, { teen_age: 19 }));
-    assert.strictEqual(adult.status, 400, '18+ rejected at register');
+  await t('register: under-13 rejected (COPPA), missing consent rejected, 18+ accepted (adult mode)', async () => {
+    const kid = await post('/api/register', Object.assign({}, REG, { teen_age: 12 }));
+    assert.strictEqual(kid.status, 400, 'under-13 rejected at register');
     const noConsent = await post('/api/register', { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 'T', teen_age: 15 });
     assert.strictEqual(noConsent.status, 400, 'missing consent rejected');
+    const adult = await post('/api/register', Object.assign({}, REG, { teen_age: 25 }));
+    assert.strictEqual(adult.status, 200, '18+ accepted (adult self-signup)');
+  });
+
+  await t('adult self-signup: confirm 18+ ok + is_adult; adult link rejects under-18; self-report needs a result', async () => {
+    const token = await tokenOf(await post('/api/register', Object.assign({}, REG, { teen_age: 25 })));
+    const cookie = cookieFrom(await post('/api/session/start', { i: token }));
+    const ok = await (await post('/api/session/confirm-age', { age: 25 }, cookie)).json();
+    assert.strictEqual(ok.ok, true, 'adult confirms 18+');
+    assert.strictEqual(ok.is_adult, true, 'flagged adult');
+    assert.strictEqual((await (await get('/api/session', cookie)).json()).is_adult, true, 'session payload marks adult');
+    const noResult = await post('/api/self-report', {}, cookie);
+    assert.strictEqual(noResult.status, 400, 'self-report before a result -> 400 (no result yet)');
+    // a fresh adult link rejects an under-18 self-attestation (need_adult) and purges
+    const token2 = await tokenOf(await post('/api/register', Object.assign({}, REG, { teen_age: 20 })));
+    const cookie2 = cookieFrom(await post('/api/session/start', { i: token2 }));
+    const wrong = await (await post('/api/session/confirm-age', { age: 15 }, cookie2)).json();
+    assert.strictEqual(wrong.ok, false, 'adult link rejects under-18');
+    assert.strictEqual(wrong.reason, 'need_adult', 'reason need_adult');
+  });
+
+  await t('teen session cannot use the adult self-report endpoint', async () => {
+    const token = await tokenOf(await post('/api/register', REG)); // age 15 (teen)
+    const cookie = cookieFrom(await post('/api/session/start', { i: token }));
+    await post('/api/session/confirm-age', { age: 15 }, cookie);
+    const teenSelf = await post('/api/self-report', {}, cookie);
+    assert.strictEqual(teenSelf.status, 400, 'teen session -> 400 on /api/self-report');
   });
 
   await t('age gate: interview turn 409s until confirmed; adult confirm purges the session', async () => {

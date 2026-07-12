@@ -37,6 +37,7 @@ window.session = null;          // teen-safe fields from /api/session(/start); a
 window.safetyEvent = null;      // null | 'CRISIS' | 'ABUSE' | 'EXPLOITATION' | 'THREAT' | 'SUPPORT'
 window.halted = false;          // hard stop (CRISIS/THREAT): no more turns, no scoring
 window.blockParentReport = false; // any serious flag (see SERIOUS_SAFETY): this session never produces a parent report
+window.isAdult = false;         // 18+ self-signup: no parent, no parent report — the result is their own
 window.interviewComplete = false;
 window.skillsComplete = false;
 window.scoringResult = null;
@@ -84,6 +85,7 @@ async function boot() {
     return showError("Couldn't reach the server. Check your connection and reload.");
   }
   window.session = session;
+  window.isAdult = !!session.is_adult;
 
   if (session.safety_blocked) {
     return showError("This check is closed. If you’re carrying something heavy, you can call or text <b>988</b> any time — it’s free and people who can help answer.");
@@ -135,7 +137,11 @@ async function recoverResult(session) {
 // 3-card onboarding before the interview (replaces the long opening message).
 function showOnboarding() {
   const share = document.getElementById('onboardShare');
-  if (share && window.session && window.session.parent_first_name) {
+  if (window.isAdult) {
+    if (share) share.textContent = 'This Map is private to you. Nothing is shared with anyone — at the end you can choose to email yourself a copy.';
+    const safety = document.getElementById('onboardSafety');
+    if (safety) safety.textContent = 'This is private to you. One exception: if something you say makes us think you might be in immediate danger, being hurt, or seriously unsafe, the app may pause and show places that can help. In some cases a trained OTS responder may be alerted so someone can check in — they don’t see your full conversation.';
+  } else if (share && window.session && window.session.parent_first_name) {
     share.textContent = 'If anything goes to ' + window.session.parent_first_name +
       ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
   }
@@ -171,6 +177,7 @@ async function confirmAge(age) {
     if (j && j.ok) {
       window.session.teen_age = j.teen_age;
       window.session.teen_age_plus_3 = j.teen_age + 3;
+      window.isAdult = !!j.is_adult;
       startInterview();
       return;
     }
@@ -183,8 +190,10 @@ async function confirmAge(age) {
     if (block) {
       block.style.display = 'block';
       block.textContent = (j && j.reason === 'under_13')
-        ? 'Thanks for being honest. This one’s built for ages 13–17, so we’ll stop here — nothing was saved.'
-        : 'Thanks! Since you’re 18 or older, the teen version isn’t the right fit — a Young Adult Map is coming soon. Nothing was saved.';
+        ? 'Thanks for being honest. This one’s built for ages 13 and up, so we’ll stop here — nothing was saved.'
+        : (j && j.reason === 'need_adult')
+          ? 'This link was set up as the adult (18+) Map, but the age you entered is under 18. Nothing was saved — ask for a teen link instead.'
+          : 'Thanks! This link was set up as the teen (13–17) Map. Since you’re 18 or older, head back and choose “18 or older” to set up your own Map. Nothing was saved.';
     }
     window.halted = true;
   } catch (e) {
@@ -566,9 +575,14 @@ function renderResult(parsed) {
   if (!window.blockParentReport) {
     const banner = elem('div', 'result-banner');
     banner.appendChild(elem('span', 'rb-check', '✓'));
-    banner.appendChild(elem('span', 'rb-text', window.alreadyShared
-      ? 'You already shared this with ' + window.session.parent_first_name + ' — this is your saved result, and you can re-save it as a PDF below.'
-      : 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
+    const bannerText = window.isAdult
+      ? (window.alreadyShared
+        ? 'This is your Map — we emailed you a copy. You can also re-save it as a PDF below.'
+        : 'Your Map is ready — it’s just for you. Save it or email yourself a copy at the bottom.')
+      : (window.alreadyShared
+        ? 'You already shared this with ' + window.session.parent_first_name + ' — this is your saved result, and you can re-save it as a PDF below.'
+        : 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.');
+    banner.appendChild(elem('span', 'rb-text', bannerText));
     root.appendChild(banner);
   }
   root.appendChild(buildSystemMap(t));
@@ -635,6 +649,7 @@ function renderResult(parsed) {
 // share button, skip the PDF, and won't find the scenarios — so they're now
 // explicit, labeled steps, with the share as the obvious primary action.
 function buildNextSteps() {
+  if (window.isAdult) return buildAdultNextSteps();
   const parent = window.session.parent_first_name;
   const box = elem('div', 'next-steps');
 
@@ -692,6 +707,68 @@ function buildNextSteps() {
     box.appendChild(shareStep);
   }
   return box;
+}
+
+// Adult self-signup end-of-result block: no parent, no Handshake, no veto. Just
+// keep your result (PDF/card) and optionally email yourself a copy.
+function buildAdultNextSteps() {
+  const box = elem('div', 'next-steps');
+  box.appendChild(elem('div', 'ns-title', window.alreadyShared ? 'Your Map' : 'Before you go'));
+  if (window.alreadyShared) box.appendChild(elem('div', 'ns-status', '✓ We emailed a copy to you.'));
+
+  // Optional scenarios (same as the teen flow) — only if not already done.
+  if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
+    const step = elem('div', 'ns-step');
+    step.appendChild(elem('div', 'ns-step-h', 'Put it to the test  ·  optional, ~3 min'));
+    step.appendChild(elem('div', 'ns-step-p', 'Five quick real-life money calls. They add a “money decision skills” read to your Map.'));
+    const b = elem('button', 'btn btn-primary ns-btn', 'Try the 5 scenarios →');
+    b.addEventListener('click', startSkills);
+    step.appendChild(b);
+    box.appendChild(step);
+  }
+
+  // Keep your result.
+  const pdfStep = elem('div', 'ns-step');
+  pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
+  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
+  const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
+  pdfBtn.addEventListener('click', downloadResultPDF);
+  pdfStep.appendChild(pdfBtn);
+  const cardBtn = elem('button', 'btn btn-ghost ns-btn', '⤓  Save a shareable card');
+  cardBtn.style.marginTop = '8px';
+  cardBtn.addEventListener('click', downloadShareCard);
+  pdfStep.appendChild(cardBtn);
+  box.appendChild(pdfStep);
+
+  // Email me a copy (their own address; nothing shared with anyone else).
+  if (!window.blockParentReport && !window.alreadyShared) {
+    const step = elem('div', 'ns-step ns-primary');
+    step.appendChild(elem('div', 'ns-step-h', 'Email me a copy  ·  your call'));
+    step.appendChild(elem('div', 'ns-step-p', 'Send your full Map to your inbox. It’s just for you — nothing goes to anyone else.'));
+    const b = elem('button', 'btn btn-primary result-cta ns-btn-lg', 'Email me my Map →');
+    b.addEventListener('click', () => sendSelfReport(b));
+    step.appendChild(b);
+    box.appendChild(step);
+  } else if (window.blockParentReport) {
+    box.appendChild(elem('div', 'next-note', 'This result is just for you.'));
+  }
+  return box;
+}
+
+// Adult "email me my copy": POST /api/self-report (adult sessions only). Server
+// builds the email from the stored result and sends it to the adult's own address.
+async function sendSelfReport(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const r = await fetch('/api/self-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const j = await r.json();
+    if (j && j.success) {
+      window.alreadyShared = true;
+      if (btn) { btn.textContent = 'Sent ✓ — check your inbox'; }
+    } else { throw new Error((j && j.error) || 'send failed'); }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+  }
 }
 
 // Explicit "keep private" — a durable end state, so a teen who doesn't want to

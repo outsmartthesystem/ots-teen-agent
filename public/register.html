@@ -68,8 +68,8 @@
 <body>
   <div class="wrap">
     <div class="pill">Outsmart the System</div>
-    <h1>See what your teen actually wants — and what’s quietly getting in the way.</h1>
-    <p class="lede">The <strong>Teen Money &amp; Momentum Map</strong> gives your teen a private System Map, and gives you a teen-approved guide for how to support them — without nagging, lecturing, or taking over. About 15–20 minutes, on their own.</p>
+    <h1 id="pageH1">See what your teen actually wants — and what’s quietly getting in the way.</h1>
+    <p class="lede" id="pageLede">The <strong>Money &amp; Momentum Map</strong> gives your teen a private System Map, and gives you a teen-approved guide for how to support them — without nagging, lecturing, or taking over. About 15–20 minutes, on their own.</p>
 
     <div class="card">
       <div class="pay-gate" id="payGate" style="display:none">
@@ -80,7 +80,7 @@
       </div>
       <!-- FORM -->
       <form id="form" novalidate>
-        <div class="consent">
+        <div class="consent" id="introBlock">
           <strong>Your teen drives this.</strong> They do it on their own and see their
           result first. Before anything reaches you, they preview exactly what’s in it
           and choose what to share. You’ll get a thoughtful, teen-approved snapshot —
@@ -94,28 +94,35 @@
           contact a parent in every safety case.
         </div>
 
-        <label for="parentName">Your first name</label>
+        <label for="parentName" id="nameLabel">Your first name</label>
         <input id="parentName" autocomplete="given-name" maxlength="40">
         <div class="field-error" id="parentNameErr">Please add your first name.</div>
 
-        <label for="parentEmail">Your email <span style="opacity:.7">— where your teen’s approved report comes</span></label>
+        <label for="parentEmail" id="emailLabel">Your email <span style="opacity:.7">— where your teen’s approved report comes</span></label>
         <input id="parentEmail" type="email" autocomplete="email">
         <div class="field-error" id="parentEmailErr">Please enter a valid email.</div>
 
-        <label for="teenName">Your teen’s first name</label>
-        <input id="teenName" maxlength="40">
-        <div class="field-error" id="teenNameErr">Please add your teen’s first name.</div>
+        <div id="teenNameField">
+          <label for="teenName">Your teen’s first name</label>
+          <input id="teenName" maxlength="40">
+          <div class="field-error" id="teenNameErr">Please add your teen’s first name.</div>
+        </div>
 
-        <label for="teenAge">Their age</label>
+        <label for="teenAge" id="ageLabel">Their age</label>
         <select id="teenAge">
           <option value="">Select…</option>
           <option>13</option><option>14</option><option>15</option><option>16</option><option>17</option>
           <option value="18plus">18 or older</option>
         </select>
         <div class="field-error" id="teenAgeErr">Please choose an age between 13 and 17.</div>
-        <div class="field-note" id="teenAgeAdult" style="display:none">For 18 or older, they’ll start their own <strong>Young Adult Map</strong> — that version is coming soon. This setup is for teens 13–17.</div>
+        <div id="adultAgeField" style="display:none;margin-top:10px">
+          <label for="adultAge">Your exact age</label>
+          <input id="adultAge" type="number" inputmode="numeric" min="18" max="99" placeholder="e.g. 22">
+          <div class="field-error" id="adultAgeErr">Please enter your age (18 or older).</div>
+        </div>
+        <div class="field-note" id="teenAgeAdult" style="display:none">You’re setting this up for <strong>yourself</strong> — you’ll get your own private Map and choose whether to email yourself a copy. No parent involved.</div>
 
-        <label class="check"><input type="checkbox" id="consent"> I understand this is a money-and-momentum snapshot for teens — <strong>not</strong> a crisis service, therapy, or a clinical assessment.</label>
+        <label class="check"><input type="checkbox" id="consent"> <span id="consentText">I understand this is a money-and-momentum snapshot for teens — <strong>not</strong> a crisis service, therapy, or a clinical assessment.</span></label>
         <div class="field-error" id="consentErr">Please confirm you understand this before continuing.</div>
 
         <button class="btn" id="submitBtn" type="submit">Create my teen’s link</button>
@@ -128,6 +135,7 @@
         <div class="pill" style="color:var(--good)">Ready</div>
         <h2 id="successHeading">Here’s your teen’s private link</h2>
         <p class="send-guide" id="sendGuide">Send this to them — text it, AirDrop it, or open it on their phone. It’s just for them.</p>
+        <button class="btn" id="startBtn" type="button" style="display:none;margin:4px 0 14px">Start my Map →</button>
         <div class="link-row">
           <input id="teenLink" readonly>
           <button class="copy-btn" id="copyBtn">Copy</button>
