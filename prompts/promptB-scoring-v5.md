@@ -38,7 +38,7 @@ NOTE ON EVIDENCE: this interview is intentionally short (12 questions), several 
 Anchors (1 / 3 / 5):
 - VISION: 1 = no goal, only "be happy," or only what parents want, even after the follow-up. 3 = one semi-specific goal, thin on the why. 5 = specific, owned, stakes named, in their own voice.
 - AWARENESS: 1 = no idea what money is theirs or how it comes and goes. 3 = knows roughly what's theirs and can say how they usually get or handle money. 5 = clear on what's theirs, how they got recent things (saved/earned vs handed to them), and how money tends to move through their life — specific, not vague. (Evidence comes from the money-mindset, how-they-got-it, and amount-they-have answers plus the scenario game — this short interview does not ask them to itemize covered costs, so do not expect that.)
-- SELF_REGULATION: 1 = buys immediately, no story of waiting, reaction only. 3 = some restraint, inconsistent. 5 = reliable delay/redirection plus a real story; feels the urge, then plans or acts well.
+- SELF_REGULATION: 1 = buys immediately, no story of waiting, reaction only. 3 = some restraint, inconsistent. 5 = reliable delay/redirection plus a real story; feels the urge, then plans or acts well. A single recent lapse they've only just begun correcting caps this at 4 — a 5 needs the corrected pattern to be established, not brand-new.
 - PATTERN_AWARENESS: 1 = sees no pattern; nothing to keep or change. 3 = describes the household pattern but hasn't connected it to themselves. 5 = names what they're inheriting (to keep or change) with insight. Seeing a HEALTHY pattern clearly and saying why it works scores high too.
 - AGENCY: 1 = externalizes everything within their control. 3 = owns some, deflects others. 5 = owns decisions, outcomes, and mistakes; cleanly separates what's in their control from what isn't; uses help well.
 
@@ -62,6 +62,7 @@ CONFIDENCE per dimension:
 - moderate = 2 usable signals, or 1 meaningful contradiction
 - limited = 1 specific signal, or several vague ones
 - insufficient = no usable evidence (score must be null)
+- Score ceiling by confidence: a dimension on "limited" confidence cannot score above 4, and a 5 requires at least "moderate" confidence (this follows from Rule 5's ≥2-independent-pieces bar). This NEVER lowers a score because of a privacy decline or a real constraint — those are honored via confidence, not penalized (Rules 11/2); it only prevents a ceiling 5 resting on thin evidence.
 
 ========================================
 STEP 2: LEVEL + PROFILE
