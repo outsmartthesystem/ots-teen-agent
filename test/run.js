@@ -172,6 +172,11 @@ test('programFor: recognizes exactly the four paid product keys', () => {
   eq(srv.programFor('teen-investing-starter').label, 'Teen Investing Starter');
   eq(srv.programFor('unknown'), null, 'unknown fails closed');
 });
+test('archiveAllowedForSession: paid program transcripts always fail closed', () => {
+  ['entrepreneurship-program', 'investing-mastermind', 'teen-side-hustle', 'teen-investing-starter']
+    .forEach(program_key => eq(srv.archiveAllowedForSession({ program_key }), false, program_key + ' never archived'));
+  eq(srv.archiveAllowedForSession({}), true, 'unattributed beta test retains the existing archive gate');
+});
 test('buildGhlPayload: completion carries product identity and no scored result', () => {
   const payload = srv.buildGhlPayload('map_interview_complete', {
     id: 'sid-1', parent_email: 'p@x.com', parent_first_name: 'P', teen_first_name: 'T', teen_age: 15,

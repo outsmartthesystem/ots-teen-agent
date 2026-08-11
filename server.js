@@ -1566,20 +1566,26 @@ async function fireSafetyAlert(flag, info) {
 
 // ─── TEST-PHASE SESSION ARCHIVE ─────────────────────────────────────────────
 // During the supervised pilot, email a FULL record (transcript + assessment) to
-// ARCHIVE_EMAIL_TO so there's data to improve the product. Gated entirely by
-// that env var: unset = OFF. Remove it (or clear it) to turn recording off at
-// go-live. It reuses the Gmail transport, so EMAIL_USER/EMAIL_PASS must be set.
+// ARCHIVE_EMAIL_TO so there's data to improve the product. Gated by that env
+// var and LAUNCH_MODE, and categorically disabled for all four paid coaching
+// products. Real program sessions must use the redacted coach-result email only.
+// It reuses the Gmail transport, so EMAIL_USER/EMAIL_PASS must be set.
 //
 // SAFETY CARVE-OUT: a safety-flagged session is NEVER archived. CRISIS/ABUSE
 // disclosures are purged on the device and handled by the (quote-free) safety
 // alert — they must not land verbatim in an archive inbox.
-function archiveEnabled() {
+function archiveAllowedForSession(session) {
+  return !(session && programFor(session.program_key));
+}
+
+function archiveEnabled(session) {
   if ((process.env.LAUNCH_MODE || 'beta').toLowerCase() === 'production') return false; // never record in production
+  if (!archiveAllowedForSession(session)) return false; // never archive paid-program transcripts
   return !!(process.env.ARCHIVE_EMAIL_TO && directMailer);
 }
 
 async function sendArchiveEmail(session, kind, transcript, assessment) {
-  if (!archiveEnabled()) return;
+  if (!archiveEnabled(session)) return;
   if (session.safety_blocked) { console.warn('[ARCHIVE_SKIP] safety-flagged sid=' + session.id); return; }
   const to = process.env.ARCHIVE_EMAIL_TO;
   const pretty = (() => { try { return JSON.stringify(assessment, null, 2); } catch { return String(assessment); } })();
@@ -1673,7 +1679,17 @@ app.get('/api/health', (req, res) => {
   }
   const missing = Object.keys(configured).filter(k => !configured[k]);
   // archive_recording is OPTIONAL (test-phase only) — reported, but never gates ready in beta.
-  res.json({ ok: true, service: 'ots-teen-agent', mode, ready: missing.length === 0, db: db.backend(), archive_recording: archiveEnabled(), configured, missing });
+  res.json({
+    ok: true,
+    service: 'ots-teen-agent',
+    mode,
+    ready: missing.length === 0,
+    db: db.backend(),
+    archive_recording: archiveEnabled(),
+    program_archive_recording: archiveEnabled({ program_key: 'entrepreneurship-program' }),
+    configured,
+    missing
+  });
 });
 
 // Serve ONLY the public asset directory (whitelist, not a blacklist). Backend
@@ -1708,5 +1724,5 @@ module.exports = {
   signPaidPass, verifyPaidPass, sessionEntitles,
   QUESTION_REGISTRY, deterministicAnchor, parseInterviewMarker,
   buildSafetyEmail, scoringSafetyFlag, SAFETY_FLAGS, SAFETY_EMAIL_FLAGS, SAFETY_BLOCK_FLAGS, SAFETY_SENTINEL_RE,
-  isAdultSession, buildSelfEmail, INTERVIEW_SUB, chipsFor, GOAL_Q_RE
+  isAdultSession, buildSelfEmail, archiveAllowedForSession, INTERVIEW_SUB, chipsFor, GOAL_Q_RE
 };
