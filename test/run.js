@@ -113,6 +113,28 @@ test('db: claimPaymentSession is one-time per Stripe session id', async () => {
   eq(await db.claimPaymentSession(sid), false, 'reuse of same purchase loses');
   eq(await db.claimPaymentSession(''), false, 'empty id false');
 });
+test('db: coach report is product-gated, fingerprint-deduplicated, and retryable', async () => {
+  const result = { teen_output: { goal_reflected: 'Build a small business', bars: [{ dimension: 'Vision', score: 4 }] }, level: { stage: 'Building' } };
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', program_key: 'entrepreneurship-program', program_label: 'Entrepreneurship Program', expires_at: Date.now() + 60000 });
+  await db.updateSession(id, { interview_complete: true, result });
+  eq(await db.claimCoachReportSend(id, 'fp1'), true, 'first version claims');
+  eq(await db.claimCoachReportSend(id, 'fp1'), false, 'same version deduplicated');
+  eq(await db.claimCoachReportSend(id, 'fp2'), true, 'refined version can send an update');
+  await db.releaseCoachReportSend(id, 'fp2');
+  eq(await db.claimCoachReportSend(id, 'fp2'), true, 'failed version can retry after release');
+});
+test('db: coach report refuses unattributed and safety-blocked sessions', async () => {
+  const result = { teen_output: { bars: [{ dimension: 'Vision', score: 3 }] }, level: {} };
+  const direct = nid();
+  await db.createSession({ id: direct, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  await db.updateSession(direct, { interview_complete: true, result });
+  eq(await db.claimCoachReportSend(direct, 'fp'), false, 'no product -> no routine coach report');
+  const blocked = nid();
+  await db.createSession({ id: blocked, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', program_key: 'teen-side-hustle', program_label: 'Teen Side Hustle Launch', expires_at: Date.now() + 60000 });
+  await db.updateSession(blocked, { interview_complete: true, result, safety_blocked: true });
+  eq(await db.claimCoachReportSend(blocked, 'fp'), false, 'safety block -> no routine coach report');
+});
 
 // ─────────────────────── server helpers ──────────────────────
 test('formatTranscript: labels, seed filtered, separator', () => {
@@ -142,6 +164,45 @@ test('validateScoring: accepts valid, rejects malformed, honors safety', () => {
   eq(srv.validateScoring({ safety_check: { clear: false, flag: 'CRISIS' } }), true, 'safety short-circuits');
   eq(srv.validateScoring({ safety_check: { clear: true }, teen_output: { bars: [] } }), false, 'empty bars fails');
   eq(srv.validateScoring({ safety_check: { clear: true }, teen_output: { bars: [{ dimension: 'V', score: 7 }] } }), false, 'bad bar score fails');
+});
+test('programFor: recognizes exactly the four paid product keys', () => {
+  eq(srv.programFor('entrepreneurship-program').label, 'Entrepreneurship Program');
+  eq(srv.programFor('investing-mastermind').label, 'Investing Mastermind');
+  eq(srv.programFor('teen-side-hustle').label, 'Teen Side Hustle Launch');
+  eq(srv.programFor('teen-investing-starter').label, 'Teen Investing Starter');
+  eq(srv.programFor('unknown'), null, 'unknown fails closed');
+});
+test('buildGhlPayload: completion carries product identity and no scored result', () => {
+  const payload = srv.buildGhlPayload('map_interview_complete', {
+    id: 'sid-1', parent_email: 'p@x.com', parent_first_name: 'P', teen_first_name: 'T', teen_age: 15,
+    program_key: 'investing-mastermind', program_label: 'Investing Mastermind', completed_at: new Date('2026-08-11T12:00:00Z')
+  }, 'map-interview-complete');
+  eq(payload.program_key, 'investing-mastermind');
+  eq(payload.tag, 'map-interview-complete');
+  ok(payload.completed_at.includes('2026-08-11'), 'completion timestamp carried');
+  eq(Object.prototype.hasOwnProperty.call(payload, 'result'), false, 'no scored result in CRM payload');
+});
+test('buildCoachResultEmail: includes scored Map but redacts quotes and transcript', () => {
+  const session = {
+    teen_first_name: 'Ayan', teen_age: 15, parent_first_name: 'Chirag', parent_email: 'parent@example.com',
+    program_key: 'entrepreneurship-program', program_label: 'Entrepreneurship Program', completed_at: new Date('2026-08-11T12:00:00Z'),
+    result: {
+      level: { show_level: true, stage: 'Building' },
+      teen_output: {
+        stage_display: 'Building', goal_reflected: 'Launch a design service',
+        demonstrated_strength: { text: 'Turns ideas into concrete next steps', evidence_quote: 'RAW_QUOTE_MUST_NOT_LEAK' },
+        current_pattern: 'Starts quickly and learns by doing', biggest_unlock: { skill: 'customer discovery', framing: 'Test before building' },
+        growth_horizon: 'A repeatable offer is within reach', confidence_note: 'Strongest read: Agency', seven_day_move: 'Write three interview questions',
+        bars: [{ dimension: 'Vision', score: 4 }]
+      },
+      money_judgment: { score: 4, confidence: 'moderate', teen_summary: 'Pauses before acting', per_scenario: [{ quote: 'RAW_SCENARIO_QUOTE' }] }
+    },
+    turns: { interview: [{ role: 'user', content: 'RAW_TRANSCRIPT_MUST_NOT_LEAK' }] }
+  };
+  const email = srv.buildCoachResultEmail(session, false);
+  ok(email.subject.includes('Ayan') && email.subject.includes('Entrepreneurship Program'), 'identity + program in subject');
+  ok(email.text.includes('Launch a design service') && email.text.includes('Vision: 4 / 5'), 'scored result included');
+  ok(!email.html.includes('RAW_QUOTE_MUST_NOT_LEAK') && !email.text.includes('RAW_SCENARIO_QUOTE') && !email.text.includes('RAW_TRANSCRIPT_MUST_NOT_LEAK'), 'raw content redacted');
 });
 test('phaseFor: phase boundaries', () => {
   eq(srv.phaseFor(1), 'Arrival');

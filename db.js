@@ -8,13 +8,14 @@
 //
 // Row shape (see init() for the authoritative column list):
 //   identity/PII: id, teen_first_name, teen_age, parent_first_name, parent_email
+//   program:      program_key, program_label
 //   invite:       invite_token_hash, invite_used_at
 //   lifecycle:    created_at, expires_at, completed_at, interview_complete
 //   sharing:      sharing_status (pending|sent|declined), sharing_decided_at, report_sent
 //   safety:       safety_blocked, safety_flag
 //   age:          teen_age_confirmed_at
 //   decision lab: decision_lab_status (pending|completed|skipped)
-//   scoring:      refine_count
+//   scoring:      refine_count, coach_report_fingerprint, coach_report_sent_at
 //   JSONB:        report_draft, turns, result
 
 const USE_PG = !!process.env.DATABASE_URL;
@@ -60,6 +61,13 @@ async function init() {
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS teen_age_confirmed_at TIMESTAMPTZ`);
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS decision_lab_status TEXT NOT NULL DEFAULT 'pending'`);
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS refine_count INTEGER NOT NULL DEFAULT 0`);
+  // Product-aware coach result delivery. These are additive so existing sessions
+  // remain valid; only sessions minted by one of the four paid-product intakes
+  // receive routine coach reports.
+  await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS program_key TEXT`);
+  await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS program_label TEXT`);
+  await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS coach_report_fingerprint TEXT`);
+  await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS coach_report_sent_at TIMESTAMPTZ`);
   // Look up sessions by invite token hash during the one-time claim.
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_sessions_invite ON sessions (invite_token_hash)`);
   // Consumed Stripe checkout sessions — one purchase = one teen setup.
@@ -73,21 +81,23 @@ function memRow(s) {
   return {
     id: s.id, teen_first_name: s.teen_first_name, teen_age: s.teen_age,
     parent_first_name: s.parent_first_name, parent_email: s.parent_email,
+    program_key: s.program_key || null, program_label: s.program_label || null,
     invite_token_hash: s.invite_token_hash || null, invite_used_at: null,
     created_at: new Date(), expires_at: new Date(s.expires_at),
     safety_blocked: false, safety_flag: null, interview_complete: false,
     report_sent: false, sharing_status: 'pending', sharing_decided_at: null,
     completed_at: null, teen_age_confirmed_at: null, decision_lab_status: 'pending',
-    refine_count: 0, report_draft: null, turns: null, result: null
+    refine_count: 0, coach_report_fingerprint: null, coach_report_sent_at: null,
+    report_draft: null, turns: null, result: null
   };
 }
 
 async function createSession(s) {
   if (pool) {
     await pool.query(
-      `INSERT INTO sessions (id, teen_first_name, teen_age, parent_first_name, parent_email, expires_at, invite_token_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [s.id, s.teen_first_name, s.teen_age, s.parent_first_name, s.parent_email, new Date(s.expires_at), s.invite_token_hash || null]
+      `INSERT INTO sessions (id, teen_first_name, teen_age, parent_first_name, parent_email, expires_at, invite_token_hash, program_key, program_label)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [s.id, s.teen_first_name, s.teen_age, s.parent_first_name, s.parent_email, new Date(s.expires_at), s.invite_token_hash || null, s.program_key || null, s.program_label || null]
     );
   } else {
     mem.set(s.id, memRow(s));
@@ -196,6 +206,56 @@ async function claimRefine(id, max) {
   return null;
 }
 
+// Atomically claim delivery of one version of the scored coach report. Repeated
+// renders of the same result are deduplicated by fingerprint; a genuinely
+// refined result can send one updated report. Safety-blocked, incomplete,
+// direct/unattributed, and adult sessions are never eligible.
+async function claimCoachReportSend(id, fingerprint) {
+  if (!id || !fingerprint) return false;
+  if (pool) {
+    const r = await pool.query(
+      `UPDATE sessions
+       SET coach_report_fingerprint = $2, coach_report_sent_at = now()
+       WHERE id = $1
+         AND safety_blocked = false
+         AND interview_complete = true
+         AND result IS NOT NULL
+         AND teen_age BETWEEN 13 AND 17
+         AND program_key IS NOT NULL
+         AND program_key <> ''
+         AND coach_report_fingerprint IS DISTINCT FROM $2
+       RETURNING id`, [id, fingerprint]);
+    return r.rowCount === 1;
+  }
+  const row = mem.get(id);
+  if (row && !row.safety_blocked && row.interview_complete && row.result &&
+      row.teen_age >= 13 && row.teen_age <= 17 && row.program_key &&
+      row.coach_report_fingerprint !== fingerprint) {
+    row.coach_report_fingerprint = fingerprint;
+    row.coach_report_sent_at = new Date();
+    return true;
+  }
+  return false;
+}
+
+// A transport failure must not permanently consume a version. Only release the
+// exact fingerprint that failed so an older request cannot erase a newer send.
+async function releaseCoachReportSend(id, fingerprint) {
+  if (!id || !fingerprint) return;
+  if (pool) {
+    await pool.query(
+      `UPDATE sessions
+       SET coach_report_fingerprint = NULL, coach_report_sent_at = NULL
+       WHERE id = $1 AND coach_report_fingerprint = $2`, [id, fingerprint]);
+    return;
+  }
+  const row = mem.get(id);
+  if (row && row.coach_report_fingerprint === fingerprint) {
+    row.coach_report_fingerprint = null;
+    row.coach_report_sent_at = null;
+  }
+}
+
 // Hard-delete one session (privacy/delete + retention).
 async function deleteSession(id) {
   if (!id) return;
@@ -243,5 +303,6 @@ function backend() { return pool ? 'postgres' : 'memory'; }
 
 module.exports = {
   init, ready, createSession, getSession, claimInvite, updateSession,
-  claimReportSend, claimRefine, deleteSession, deleteExpired, claimPaymentSession, backend
+  claimReportSend, claimRefine, claimCoachReportSend, releaseCoachReportSend,
+  deleteSession, deleteExpired, claimPaymentSession, backend
 };

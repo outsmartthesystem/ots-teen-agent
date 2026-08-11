@@ -50,14 +50,41 @@ function ga4Event(clientId, name, params) {
     timeout: 8000
   }).catch(err => console.warn('[GA4]', name, 'failed:', err.message));
 }
+const PROGRAMS = Object.freeze({
+  'entrepreneurship-program': 'Entrepreneurship Program',
+  'investing-mastermind': 'Investing Mastermind',
+  'teen-side-hustle': 'Teen Side Hustle Launch',
+  'teen-investing-starter': 'Teen Investing Starter'
+});
+function programFor(key) {
+  const k = String(key || '').trim();
+  return Object.prototype.hasOwnProperty.call(PROGRAMS, k) ? { key: k, label: PROGRAMS[k] } : null;
+}
+function buildGhlPayload(event, s, tag) {
+  return {
+    event,
+    tag,
+    session_id: s.id || '',
+    parent_email: s.parent_email || '',
+    parent_first_name: s.parent_first_name || '',
+    teen_first_name: s.teen_first_name || '',
+    teen_age: s.teen_age,
+    program_key: s.program_key || '',
+    program_label: s.program_label || '',
+    completed_at: s.completed_at ? new Date(s.completed_at).toISOString() : ''
+  };
+}
 function ghlSync(event, s, tag) {
   const url = process.env.GHL_SYNC_WEBHOOK_URL;
-  if (!url || !s) return; // unconfigured → silent no-op
-  fetch(url, {
+  if (!url || !s) return Promise.resolve(false); // unconfigured -> silent no-op
+  return fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event, tag, parent_email: s.parent_email, parent_first_name: s.parent_first_name, teen_first_name: s.teen_first_name, teen_age: s.teen_age }),
+    body: JSON.stringify(buildGhlPayload(event, s, tag)),
     timeout: 10000
-  }).catch(err => console.warn('[GHL_SYNC]', event, 'failed:', err.message));
+  }).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return true;
+  }).catch(err => { console.warn('[GHL_SYNC]', event, 'failed:', err.message); return false; });
 }
 // Client-only funnel events allowed through /api/event (server relays to GA4).
 const EVENT_WHITELIST = new Set(['map_pdf_saved', 'map_share_opened', 'map_preview_started']);
@@ -474,11 +501,10 @@ async function verifyStripeSession(sessionId) {
   } catch (e) { console.warn('[STRIPE] session verify failed:', e.message); return null; }
 }
 
-// Direct mail transport for SAFETY alerts only (not the parent report, which
-// goes via Make). Safety is critical enough that it shouldn't depend on a
-// no-code tool's plan/uptime. Configured iff EMAIL_USER + EMAIL_PASS are set
-// (a Gmail address + app password, same approach as ots-deep-work).
-const safetyMailer = (process.env.EMAIL_USER && process.env.EMAIL_PASS)
+// Direct mail transport for operational mail that must not depend on a no-code
+// tool's plan or uptime: safety alerts and redacted coach result summaries. The
+// teen-approved parent report still goes through its separate Make scenario.
+const directMailer = (process.env.EMAIL_USER && process.env.EMAIL_PASS)
   ? nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS } })
   : null;
 
@@ -576,6 +602,8 @@ function teenSafe(s) {
     teen_age: s.teen_age,
     teen_age_plus_3: s.teen_age + 3, // pre-computed: the model is unreliable at arithmetic
     parent_first_name: s.parent_first_name,
+    program_key: s.program_key || '',
+    program_label: s.program_label || '',
     is_adult: isAdultSession(s),
     interview_complete: !!s.interview_complete,
     report_sent: !!s.report_sent,
@@ -616,11 +644,12 @@ app.post('/api/register', async (req, res) => {
     if (!pass.ok || !pass.sessionId) return res.status(402).json({ error: 'payment required' });
     if (!(await db.claimPaymentSession(pass.sessionId))) return res.status(402).json({ error: 'this purchase was already used to set up a teen' });
   }
-  const { teen_first_name, teen_age, parent_first_name, parent_email, consent } = req.body || {};
+  const { teen_first_name, teen_age, parent_first_name, parent_email, program_key, consent } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
   const pEmail = String(parent_email || '').trim();
   const age = Number(teen_age);
+  const program = program_key ? programFor(program_key) : null;
 
   if (tName.length < 1 || tName.length > 40) return res.status(400).json({ error: 'teen_first_name required (1–40 chars)' });
   if (pName.length < 1 || pName.length > 40) return res.status(400).json({ error: 'parent_first_name required (1–40 chars)' });
@@ -630,18 +659,37 @@ app.post('/api/register', async (req, res) => {
   // serves both; the entry page routes the person by the age they pick.
   if (!Number.isInteger(age) || age < 13 || age > 99) return res.status(400).json({ error: 'age must be an integer 13 or older (under 13 is not eligible)' });
   if (consent !== true) return res.status(400).json({ error: 'consent required' });
+  if (program_key && !program) return res.status(400).json({ error: 'unknown program_key' });
 
   const id = crypto.randomBytes(24).toString('base64url');
   const inviteToken = crypto.randomBytes(24).toString('base64url'); // one-time LINK secret; the session id is NEVER in the link
   const expires_at = Date.now() + SESSION_TTL_SECONDS * 1000;
   try {
-    await db.createSession({ id, teen_first_name: tName, teen_age: age, parent_first_name: pName, parent_email: pEmail, expires_at, invite_token_hash: sha256(inviteToken) });
+    await db.createSession({
+      id,
+      teen_first_name: tName,
+      teen_age: age,
+      parent_first_name: pName,
+      parent_email: pEmail,
+      program_key: program ? program.key : null,
+      program_label: program ? program.label : null,
+      expires_at,
+      invite_token_hash: sha256(inviteToken)
+    });
   } catch (e) {
     console.error('register/createSession error:', e.message);
     return res.status(500).json({ error: 'Could not create the session. Try again.' });
   }
   ga4Event('sess.' + id, 'map_registered', { teen_age: age });
-  ghlSync('map_registered', { parent_email: pEmail, parent_first_name: pName, teen_first_name: tName, teen_age: age }, 'map-registered');
+  ghlSync('map_registered', {
+    id,
+    parent_email: pEmail,
+    parent_first_name: pName,
+    teen_first_name: tName,
+    teen_age: age,
+    program_key: program ? program.key : '',
+    program_label: program ? program.label : ''
+  }, 'map-registered');
   clearPaidCookie(res); // single-use: one $47 payment = one teen setup
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
   res.json({ teen_url: `${base}/?i=${inviteToken}`, expires_at: Math.floor(expires_at / 1000) });
@@ -871,9 +919,13 @@ app.post('/api/score', async (req, res) => {
     const mergedTurns = Object.assign({}, session.turns || {}, { context_hint: contextHint });
     // Store the teen-facing result so a reload can re-render it (recovery).
     const teenResult = { teen_output: parsed.teen_output || null, level: parsed.level || null };
-    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns, result: teenResult, completed_at: new Date() });
+    const completedAt = new Date();
+    await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, interview_complete: true, turns: mergedTurns, result: teenResult, completed_at: completedAt });
     sendArchiveEmail(session, 'interview + assessment', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     ga4Event('sess.' + session.id, 'map_interview_complete', {});
+    // Operational notification only. The scored Map is delivered separately,
+    // after it is rendered to the teen, and never travels through this CRM event.
+    ghlSync('map_interview_complete', Object.assign({}, session, { completed_at: completedAt }), 'map-interview-complete');
     ga4Event('sess.' + session.id, 'map_result_viewed', { stage: (parsed.level && parsed.level.stage) || '' });
     res.json({ result: parsed }); // no parent_email anywhere in the model output
   } catch (e) {
@@ -1124,6 +1176,123 @@ function buildSelfEmail(t, firstName) {
 
   return { subject: `Your Money & Momentum Map, ${firstName}`, html, text: txt };
 }
+
+// Coach-only diagnostic summary. This intentionally includes the scored Map and
+// dimension scores, but never the interview transcript, teen-entered corrections,
+// evidence quotes, parent-report draft, or safety content.
+function buildCoachResultEmail(session, isUpdate) {
+  const result = session.result || {};
+  const t = result.teen_output || {};
+  const level = result.level || {};
+  const strength = t.demonstrated_strength || {};
+  const unlock = t.biggest_unlock || {};
+  const money = result.money_judgment || null;
+  const teen = session.teen_first_name || 'Teen';
+  const program = session.program_label || (programFor(session.program_key) || {}).label || 'Program';
+  const completed = session.completed_at ? new Date(session.completed_at).toISOString() : new Date().toISOString();
+  const status = isUpdate ? 'Updated diagnostic result' : 'Diagnostic complete';
+  const summaryRows = [
+    ['North Star', t.goal_reflected],
+    ['Demonstrated strength', strength.text],
+    ['Current pattern', t.current_pattern],
+    ['Primary skill to build', unlock.skill],
+    ['Why that skill matters', unlock.framing],
+    ['Growth horizon', t.growth_horizon],
+    ['7-day move', t.seven_day_move],
+    ['Confidence note', t.confidence_note],
+    ['Advanced pathway', t.high_scorer_pathway]
+  ].filter(row => row[1]);
+  const bars = Array.isArray(t.bars) ? t.bars : [];
+
+  const card = (label, value) =>
+    `<div style="margin:0 0 14px;padding:14px 16px;background:#f6f9ff;border-left:4px solid #2f6df0;border-radius:0 10px 10px 0">` +
+    `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#74809a;margin-bottom:6px;font-weight:700">${escHtml(label)}</div>` +
+    `<div style="font-size:15px;color:#1b2333;line-height:1.55">${escHtml(value)}</div></div>`;
+
+  let h = `<div style="padding:20px 22px;background:#10213f;color:#fff;border-radius:14px 14px 0 0">` +
+    `<div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#a9c5ff;margin-bottom:7px">${escHtml(status)}</div>` +
+    `<div style="font-size:24px;font-weight:750;line-height:1.2">${escHtml(teen)}'s Money &amp; Momentum Map</div>` +
+    `<div style="font-size:14px;color:#d6e3ff;margin-top:8px">${escHtml(program)}</div></div>`;
+  h += `<div style="padding:20px 22px;border:1px solid #dde3ee;border-top:0;border-radius:0 0 14px 14px">`;
+  h += `<table style="border-collapse:collapse;width:100%;font-size:14px;margin:0 0 20px"><tbody>`;
+  const metaRow = (label, value) => `<tr><td style="width:125px;color:#768096;padding:5px 12px 5px 0;vertical-align:top">${escHtml(label)}</td><td style="padding:5px 0;color:#1b2333;font-weight:600">${escHtml(value)}</td></tr>`;
+  h += metaRow('Teen', `${teen}, age ${session.teen_age}`);
+  h += metaRow('Parent', `${session.parent_first_name} <${session.parent_email}>`);
+  h += metaRow('Program', program);
+  h += metaRow('Completed', completed);
+  h += metaRow('Overall stage', level.show_level === false ? 'Not shown: partial evidence' : (t.stage_display || level.stage || 'Not enough evidence'));
+  h += `</tbody></table>`;
+  if (bars.length) {
+    h += `<div style="font-size:13px;font-weight:750;color:#1b2333;margin:0 0 9px">Dimension scores</div>`;
+    h += `<table style="border-collapse:collapse;width:100%;font-size:14px;margin:0 0 22px">`;
+    bars.forEach(bar => {
+      const score = Number.isInteger(bar && bar.score) ? `${bar.score} / 5` : 'Not enough evidence';
+      h += `<tr><td style="padding:7px 10px;border-bottom:1px solid #edf0f5;color:#39445a">${escHtml(bar && bar.dimension)}</td><td style="padding:7px 10px;border-bottom:1px solid #edf0f5;text-align:right;font-weight:700;color:#2f6df0">${escHtml(score)}</td></tr>`;
+    });
+    h += `</table>`;
+  }
+  summaryRows.forEach(([label, value]) => { h += card(label, value); });
+  if (money) {
+    const score = Number.isInteger(money.score) ? `${money.score} / 5` : 'Not enough evidence';
+    h += card('Money decision read', `${score}${money.confidence ? ` (${money.confidence} confidence)` : ''}${money.teen_summary ? `. ${money.teen_summary}` : ''}`);
+  }
+  h += `<p style="font-size:12px;color:#7e8798;line-height:1.55;margin:22px 0 0;padding-top:14px;border-top:1px solid #e7eaf0">Coach-only scored summary. No raw answers, transcript, evidence quotes, or safety content are included. Parent sharing remains a separate teen-controlled process.</p>`;
+  h += `</div>`;
+  const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:640px;margin:0 auto;color:#1b2333;line-height:1.55">${h}</div>`;
+
+  let text = `${status.toUpperCase()}\n\n${teen}'s Money & Momentum Map\nProgram: ${program}\nTeen: ${teen}, age ${session.teen_age}\nParent: ${session.parent_first_name} <${session.parent_email}>\nCompleted: ${completed}\nOverall stage: ${level.show_level === false ? 'Not shown: partial evidence' : (t.stage_display || level.stage || 'Not enough evidence')}\n\n`;
+  if (bars.length) {
+    text += 'DIMENSION SCORES\n';
+    bars.forEach(bar => { text += `- ${bar && bar.dimension}: ${Number.isInteger(bar && bar.score) ? `${bar.score} / 5` : 'Not enough evidence'}\n`; });
+    text += '\n';
+  }
+  summaryRows.forEach(([label, value]) => { text += `${label.toUpperCase()}\n${value}\n\n`; });
+  if (money) text += `MONEY DECISION READ\n${Number.isInteger(money.score) ? `${money.score} / 5` : 'Not enough evidence'}${money.confidence ? ` (${money.confidence} confidence)` : ''}${money.teen_summary ? `. ${money.teen_summary}` : ''}\n\n`;
+  text += 'Coach-only scored summary. No raw answers, transcript, evidence quotes, or safety content are included. Parent sharing remains a separate teen-controlled process.';
+
+  return {
+    subject: `[OTS ${isUpdate ? 'Updated' : 'Complete'}] ${teen} | ${program} | diagnostic result`,
+    html,
+    text
+  };
+}
+
+function coachResultFingerprint(session) {
+  return sha256(JSON.stringify({
+    program_key: session.program_key || '',
+    teen_output: session.result && session.result.teen_output,
+    level: session.result && session.result.level,
+    money_judgment: session.result && session.result.money_judgment
+  }));
+}
+
+// Called after the result has been rendered in the teen's browser. The server
+// ignores all client-authored result content and emails only its stored score.
+app.post('/api/coach-result', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  if (s.safety_blocked) return res.json({ success: true, skipped: 'safety' });
+  if (isAdultSession(s) || !programFor(s.program_key)) return res.json({ success: true, skipped: 'not_program_session' });
+  if (!s.interview_complete || !s.result || !s.result.teen_output) return res.status(409).json({ error: 'result not ready' });
+  if (!directMailer) return res.status(503).json({ error: 'coach email is not configured' });
+
+  const fingerprint = coachResultFingerprint(s);
+  const isUpdate = !!s.coach_report_sent_at;
+  const claimed = await db.claimCoachReportSend(s.id, fingerprint);
+  if (!claimed) return res.json({ success: true, duplicate: true });
+  const email = buildCoachResultEmail(s, isUpdate);
+  const to = process.env.COACH_RESULT_TO || 'jay@outsmartthesystem.org';
+  try {
+    await directMailer.sendMail({ from: process.env.EMAIL_USER, to, subject: email.subject, html: email.html, text: email.text });
+    console.log('[COACH_RESULT_SENT]', isUpdate ? 'updated' : 'complete', '->', to, '| sid=' + s.id, '| program=' + s.program_key);
+    ghlSync('map_coach_result_sent', s, 'map-coach-result-sent');
+    res.json({ success: true, updated: isUpdate });
+  } catch (err) {
+    await db.releaseCoachReportSend(s.id, fingerprint);
+    console.error('Coach result email error:', err.message, '| sid=' + s.id);
+    res.status(502).json({ error: 'coach result delivery failed' });
+  }
+});
 
 // ─── SHARE DECLINE ("Keep this private" / "Don't send anything") ────────────
 // Durable private decision: block any future parent-report send, drop the stored
@@ -1378,7 +1547,7 @@ async function fireSafetyAlert(flag, info) {
   console.warn('[SAFETY_EVENT]', flag, '| event=' + eventId, '| sid=' + info.sid, '| teen=' + info.teen_first_name, '| age=' + info.teen_age);
 
   if (!SAFETY_EMAIL_FLAGS.has(flag)) return; // SUPPORT/DISTRESS: recorded, not emailed
-  if (!safetyMailer) {
+  if (!directMailer) {
     console.error('Safety email not configured (EMAIL_USER/EMAIL_PASS) — a', flag, 'alert was NOT delivered. event=' + eventId);
     return;
   }
@@ -1388,7 +1557,7 @@ async function fireSafetyAlert(flag, info) {
   try {
     const msg = { from: process.env.EMAIL_USER, to, subject: email.subject, html: email.html, text: email.text };
     if (cc) msg.cc = cc;
-    await safetyMailer.sendMail(msg);
+    await directMailer.sendMail(msg);
     console.warn('[SAFETY_ALERT_SENT]', flag, '| event=' + eventId, '→', to + (cc ? ' (cc ' + cc + ')' : ''), '| sid=' + info.sid);
   } catch (err) {
     console.error('Safety email send error:', err.message, '| event=' + eventId);
@@ -1406,7 +1575,7 @@ async function fireSafetyAlert(flag, info) {
 // alert — they must not land verbatim in an archive inbox.
 function archiveEnabled() {
   if ((process.env.LAUNCH_MODE || 'beta').toLowerCase() === 'production') return false; // never record in production
-  return !!(process.env.ARCHIVE_EMAIL_TO && safetyMailer);
+  return !!(process.env.ARCHIVE_EMAIL_TO && directMailer);
 }
 
 async function sendArchiveEmail(session, kind, transcript, assessment) {
@@ -1429,7 +1598,7 @@ async function sendArchiveEmail(session, kind, transcript, assessment) {
     `Parent: ${session.parent_first_name} <${session.parent_email}>\nStage: ${kind}\n\n` +
     `===== FULL ASSESSMENT =====\n${pretty}\n\n===== FULL TRANSCRIPT =====\n${transcript}\n`;
   try {
-    await safetyMailer.sendMail({ from: process.env.EMAIL_USER, to, subject, html, text });
+    await directMailer.sendMail({ from: process.env.EMAIL_USER, to, subject, html, text });
     console.log('[ARCHIVE_SENT]', kind, '→', to, '| sid=' + session.id);
   } catch (err) {
     console.error('Archive email error:', err.message);
@@ -1487,7 +1656,8 @@ app.get('/api/health', (req, res) => {
     anthropic: !!process.env.ANTHROPIC_API_KEY,
     teen_webhook: !!process.env.TEEN_MAKE_WEBHOOK_URL,
     make_secret: !!process.env.MAKE_SHARED_SECRET,
-    safety_email: !!safetyMailer,
+    safety_email: !!directMailer,
+    coach_results_email: !!directMailer && !!(process.env.COACH_RESULT_TO || 'jay@outsmartthesystem.org'),
     durable_db: db.backend() === 'postgres' && db.ready()   // configured AND actually initialized
   };
   // Production launch gates (go-live hardening): counsel sign-off + archiving OFF.
@@ -1531,6 +1701,7 @@ if (require.main === module) {
 module.exports = {
   app,
   buildApprovedItems, buildParentEmail,
+  buildCoachResultEmail, coachResultFingerprint, buildGhlPayload, programFor, PROGRAMS,
   formatTranscript, stripUnverifiedQuotes, validateScoring, validScore,
   parseScoringJSON, phaseFor, interviewQuestionNum,
   computeScoreMetadata, stageForTotal,

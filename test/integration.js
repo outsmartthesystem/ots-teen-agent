@@ -45,6 +45,27 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
     assert.strictEqual(adult.status, 200, '18+ accepted (adult self-signup)');
   });
 
+  await t('register: exact product identity survives into the teen session; unknown product fails closed', async () => {
+    const programReg = Object.assign({}, REG, { program_key: 'teen-investing-starter' });
+    const token = await tokenOf(await post('/api/register', programReg));
+    const cookie = cookieFrom(await post('/api/session/start', { i: token }));
+    const session = await (await get('/api/session', cookie)).json();
+    assert.strictEqual(session.program_key, 'teen-investing-starter', 'program key stored');
+    assert.strictEqual(session.program_label, 'Teen Investing Starter', 'canonical label stored');
+    const unknown = await post('/api/register', Object.assign({}, REG, { program_key: 'made-up-product' }));
+    assert.strictEqual(unknown.status, 400, 'unknown product rejected');
+  });
+
+  await t('coach result endpoint skips unattributed sessions and waits for scored program results', async () => {
+    const directToken = await tokenOf(await post('/api/register', REG));
+    const directCookie = cookieFrom(await post('/api/session/start', { i: directToken }));
+    const direct = await (await post('/api/coach-result', {}, directCookie)).json();
+    assert.strictEqual(direct.skipped, 'not_program_session', 'direct session not routed to coach');
+    const programToken = await tokenOf(await post('/api/register', Object.assign({}, REG, { program_key: 'entrepreneurship-program' })));
+    const programCookie = cookieFrom(await post('/api/session/start', { i: programToken }));
+    assert.strictEqual((await post('/api/coach-result', {}, programCookie)).status, 409, 'program session cannot notify before score exists');
+  });
+
   await t('adult self-signup: confirm 18+ ok + is_adult; adult link rejects under-18; self-report needs a result', async () => {
     const token = await tokenOf(await post('/api/register', Object.assign({}, REG, { teen_age: 25 })));
     const cookie = cookieFrom(await post('/api/session/start', { i: token }));
