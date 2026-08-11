@@ -142,8 +142,10 @@ function showOnboarding() {
     const safety = document.getElementById('onboardSafety');
     if (safety) safety.textContent = 'This is private to you. One exception: if something you say makes us think you might be in immediate danger, being hurt, or seriously unsafe, the app may pause and show places that can help. In some cases a trained OTS responder may be alerted so someone can check in — they don’t see your full conversation.';
   } else if (share && window.session && window.session.parent_first_name) {
-    share.textContent = 'If anything goes to ' + window.session.parent_first_name +
-      ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
+    share.textContent = window.session.program_key
+      ? 'Jay, your program coach, receives your final scored System Map so he can prepare for coaching. He does not receive your raw answers or transcript. If anything goes to ' + window.session.parent_first_name + ', you preview every line and approve it first.'
+      : 'If anything goes to ' + window.session.parent_first_name +
+        ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
   }
   const btn = document.getElementById('onboardStart');
   if (btn) btn.onclick = showAgeCheck;
@@ -581,7 +583,9 @@ function renderResult(parsed) {
         : 'Your Map is ready — it’s just for you. Save it or email yourself a copy at the bottom.')
       : (window.alreadyShared
         ? 'You already shared this with ' + window.session.parent_first_name + ' — this is your saved result, and you can re-save it as a PDF below.'
-        : 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.');
+        : (window.session.program_key
+          ? 'Your result is ready. Jay receives this scored Map for coaching, without your raw answers. Nothing has been sent to your parent yet.'
+          : 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
     banner.appendChild(elem('span', 'rb-text', bannerText));
     root.appendChild(banner);
   }
@@ -643,6 +647,29 @@ function renderResult(parsed) {
   root.appendChild(buildNextSteps());
 
   scrollResultTop();
+  // Let the teen see the rendered result first, then deliver the server-stored,
+  // quote-free scored Map to the coach. Re-renders are server-deduplicated, while
+  // a genuinely refined result sends one update.
+  if (!window.isAdult && window.session.program_key) setTimeout(notifyCoachResult, 0);
+}
+
+let coachResultNotifyPromise = null;
+function notifyCoachResult() {
+  if (coachResultNotifyPromise || window.isAdult || !window.session || !window.session.program_key) return coachResultNotifyPromise;
+  coachResultNotifyPromise = (async () => {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch('/api/coach-result', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (r.ok) return true;
+        lastError = new Error('coach result HTTP ' + r.status);
+      } catch (e) { lastError = e; }
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+    console.error('coach result notification failed:', lastError);
+    return false;
+  })().finally(() => { coachResultNotifyPromise = null; });
+  return coachResultNotifyPromise;
 }
 
 // A clear, guided end-of-result block. Avi's run-through showed teens miss the
@@ -656,7 +683,7 @@ function buildNextSteps() {
   // Already shared (recovery): read-only with a re-save option.
   if (window.alreadyShared) {
     box.appendChild(elem('div', 'ns-title', 'Your saved result'));
-    box.appendChild(elem('div', 'ns-status', '✓ You already shared this with ' + parent + '.'));
+    box.appendChild(elem('div', 'ns-status', '✓ You already shared your approved lines with ' + parent + '. Jay also has the scored Map for coaching.'));
     const pdfStep = elem('div', 'ns-step');
     pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
     pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
@@ -668,7 +695,7 @@ function buildNextSteps() {
   }
 
   box.appendChild(elem('div', 'ns-title', 'Before you go'));
-  if (!window.blockParentReport) box.appendChild(elem('div', 'ns-status', 'Your result is ready — and nothing’s been sent to ' + parent + ' yet.'));
+  if (!window.blockParentReport) box.appendChild(elem('div', 'ns-status', 'Your result is ready. Jay gets the scored Map for coaching, but nothing has been sent to ' + parent + ' yet.'));
 
   if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
     const step = elem('div', 'ns-step');
@@ -693,7 +720,7 @@ function buildNextSteps() {
   box.appendChild(pdfStep);
 
   if (window.blockParentReport) {
-    box.appendChild(elem('div', 'next-note', 'Nothing from this goes to ' + parent + '. This result is just for you.'));
+    box.appendChild(elem('div', 'next-note', 'Nothing from this goes to ' + parent + '. Jay still receives the scored Map for coaching, without your raw answers.'));
   } else {
     const shareStep = elem('div', 'ns-step ns-primary');
     shareStep.appendChild(elem('div', 'ns-step-h', 'Share with ' + parent + '  ·  your call'));
@@ -775,7 +802,7 @@ async function sendSelfReport(btn) {
 // share isn't left in limbo. Ends the session (clears the cookie) and confirms.
 async function keepPrivate() {
   const parent = window.session.parent_first_name;
-  if (!confirm('Keep this just for you? Nothing will be sent to ' + parent + '.')) return;
+  if (!confirm('Keep this private from ' + parent + '? Jay still receives the scored Map for coaching, without your raw answers.')) return;
   declineShare();
 }
 
@@ -1224,10 +1251,10 @@ function renderSent(didSend) {
   root.innerHTML = '';
   const parent = window.session.parent_first_name;
   root.appendChild(elem('div', 'stage-badge', didSend ? 'Sent ✓' : 'Kept private'));
-  root.appendChild(elem('h1', 'result-h1', didSend ? 'Done.' : 'Nothing sent.'));
+  root.appendChild(elem('h1', 'result-h1', didSend ? 'Done.' : 'Nothing sent to ' + parent + '.'));
   root.appendChild(para(didSend
     ? 'Your result went to ' + parent + ' — only what you chose. That’s how this works.'
-    : 'Nothing went to ' + parent + '. This stays with you.'));
+    : 'Nothing went to ' + parent + '. Jay still has the scored Map for coaching, without your raw answers or transcript.'));
 }
 
 // Qualitative labels so a "2" doesn't read like a school grade (audit UI #6).

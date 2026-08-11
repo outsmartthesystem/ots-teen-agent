@@ -2,8 +2,9 @@
 
 The **Outsmart the System Money & Momentum Map** — a ~15–20 minute AI-guided self-discovery
 interview that shows a teen where they are on five money dimensions, names the gap
-between where they are and where they want to be, and produces two outputs: a warm
-result for the **teen** and a separate, **teen-approved** report for the **parent**.
+between where they are and where they want to be, and produces three scoped outputs:
+a warm result for the **teen**, a quote-free scored summary for the **program coach**,
+and a separate, **teen-approved** report for the **parent**.
 
 Architecturally it forks the `ots-deep-work` skeleton (Express on Render, rate limiting,
 static-file security) but diverges sharply: the interview, scoring, and safety all run
@@ -113,6 +114,7 @@ scored draft live in the session row **server-side**; the browser holds nothing 
 | `POST /api/skills/turn` | teen | one money-decision-scenario turn (Prompt C) |
 | `GET /api/interview/state` | teen (resume) | the stored transcript, to rebuild the chat on reload |
 | `POST /api/score` · `/api/skills-score` | teen | server scores its **own** completed stored transcript (no client transcript) |
+| `POST /api/coach-result` | teen result screen | email the program coach the server-stored scored Map; product-gated, fingerprint-deduplicated, no raw answers/transcript/evidence quotes |
 | `POST /api/parent-report` | teen (after veto) | build the email from the stored draft + the teen's selections; one-time + atomic; refused once declined/sent |
 | `POST /api/share/decline` | teen | durable "keep private": block any future send, purge draft + transcript |
 | `POST /api/privacy/delete` | teen/parent | hard-delete everything for this session |
@@ -145,8 +147,9 @@ See `.env.example`. Full var list:
 | `DATABASE_URL` | Postgres (Render Internal URL) for durable opaque sessions; without it the app runs a NON-durable in-memory store (dev only) and `/api/health` reports `ready:false` |
 | `TEEN_MAKE_WEBHOOK_URL` | the teen agent's **own** Make webhook for the parent report — do **not** reuse the deep-work / Family Money Story webhook |
 | `MAKE_SHARED_SECRET` | sent as `auth` in the parent-report body; the Make scenario filters on it so the webhook isn't an open email relay |
-| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts (and, in the test phase, session archives) |
+| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts and coach result summaries (and, in the test phase, session archives) |
 | `SAFETY_ALERT_TO` | where CRISIS/ABUSE alerts go (defaults to `EMAIL_USER`) |
+| `COACH_RESULT_TO` | where product-linked scored Map summaries go (defaults to `jay@outsmartthesystem.org`) |
 | `ARCHIVE_EMAIL_TO` | **test phase only**: a full session record (transcript + assessment) is emailed here; clearing it disables recording |
 | `PUBLIC_BASE_URL` | optional; base for the teen link (else derived from request host) |
 
