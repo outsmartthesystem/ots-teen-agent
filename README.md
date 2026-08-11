@@ -150,7 +150,7 @@ See `.env.example`. Full var list:
 | `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts and coach result summaries (and, in the test phase, session archives) |
 | `SAFETY_ALERT_TO` | where CRISIS/ABUSE alerts go (defaults to `EMAIL_USER`) |
 | `COACH_RESULT_TO` | where product-linked scored Map summaries go (defaults to `jay@outsmartthesystem.org`) |
-| `ARCHIVE_EMAIL_TO` | **test phase only**: a full session record (transcript + assessment) is emailed here; clearing it disables recording |
+| `ARCHIVE_EMAIL_TO` | **test phase only**: a full session record (transcript + assessment) may be emailed here for unattributed beta tests; all four paid coaching products are categorically excluded, and clearing it disables recording entirely |
 | `PUBLIC_BASE_URL` | optional; base for the teen link (else derived from request host) |
 
 ## Deploy (Render)

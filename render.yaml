@@ -25,7 +25,7 @@ services:
         sync: false
       - key: COACH_RESULT_TO        # coach-only scored result summaries; defaults to Jay's OTS inbox
         sync: false
-      - key: ARCHIVE_EMAIL_TO       # TEST PHASE ONLY: full session record emailed here; clear to disable
+      - key: ARCHIVE_EMAIL_TO       # TEST PHASE ONLY: never archives paid-program sessions; clear to disable entirely
         sync: false
       - key: PUBLIC_BASE_URL        # optional; clean teen-link base
         sync: false
