@@ -289,6 +289,34 @@ async function findLegacySession(parentEmail, teenFirstName) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+// Metadata-only incident lookup. The one-time authenticated route uses this to
+// distinguish a spelling mismatch from a missing session without returning any
+// answers, scored content, transcript, or parent-report draft.
+async function findLegacyCandidates(parentEmail, teenQuery) {
+  const email = String(parentEmail || '').trim().toLowerCase();
+  const teen = String(teenQuery || '').trim().toLowerCase();
+  if (!email && !teen) return [];
+  if (pool) {
+    const r = await pool.query(
+      `SELECT id, teen_first_name, teen_age, parent_email, program_key,
+              created_at, interview_complete, result, turns
+       FROM sessions
+       WHERE safety_blocked = false
+         AND expires_at > now()
+         AND created_at > now() - interval '21 days'
+         AND (lower(trim(parent_email)) = $1 OR lower(trim(teen_first_name)) LIKE $2)
+       ORDER BY created_at DESC
+       LIMIT 10`, [email, teen ? teen + '%' : '__no_teen_match__']);
+    return r.rows;
+  }
+  return Array.from(mem.values()).filter(row =>
+    !row.safety_blocked && new Date(row.expires_at).getTime() > Date.now() &&
+    Date.now() - new Date(row.created_at).getTime() < 21 * 864e5 &&
+    (String(row.parent_email || '').trim().toLowerCase() === email ||
+     (teen && String(row.teen_first_name || '').trim().toLowerCase().startsWith(teen))))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
+}
+
 // Attach verified product identity to one legacy session and mint a fresh
 // one-use invite. The session id never appears in the recovery link.
 async function reconcileLegacySession(id, programKey, programLabel, inviteTokenHash) {
@@ -381,6 +409,6 @@ function backend() { return pool ? 'postgres' : 'memory'; }
 module.exports = {
   init, ready, createSession, getSession, claimInvite, updateSession,
   claimReportSend, claimRefine, claimCoachReportSend, releaseCoachReportSend,
-  findLegacySession, reconcileLegacySession, claimRecoveryToken,
+  findLegacySession, findLegacyCandidates, reconcileLegacySession, claimRecoveryToken,
   deleteSession, deleteExpired, claimPaymentSession, backend
 };
