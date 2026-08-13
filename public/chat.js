@@ -128,6 +128,13 @@ async function recoverResult(session) {
         return;
       }
     }
+    // The interview-complete marker is stored before the model scoring call. If
+    // that call was interrupted, an older build showed a dead-end "complete"
+    // message forever. Resume scoring from the durable server transcript instead.
+    if (r.status === 404 && session.interview_complete && !session.report_sent) {
+      showScreen('chat');
+      return runScoring();
+    }
   } catch (e) { /* fall through */ }
   showError(session.report_sent
     ? "This check is already done — your result was shared the way you chose. Nice work."

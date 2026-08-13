@@ -56,6 +56,10 @@ const PROGRAMS = Object.freeze({
   'teen-side-hustle': 'Teen Side Hustle Launch',
   'teen-investing-starter': 'Teen Investing Starter'
 });
+// Temporary, one-time incident recovery credential. Only the digest is shipped;
+// the plaintext is held by the operator, consumed once in Postgres, then this
+// route and digest are removed after the recovery is verified.
+const LEGACY_RECOVERY_TOKEN_HASH = 'f7be75df84d5cfc6cb875423d80e5054d4c4a16342d0f0ddacfd852b13d33972';
 function programFor(key) {
   const k = String(key || '').trim();
   return Object.prototype.hasOwnProperty.call(PROGRAMS, k) ? { key: k, label: PROGRAMS[k] } : null;
@@ -928,6 +932,9 @@ app.post('/api/score', async (req, res) => {
     ghlSync('map_interview_complete', Object.assign({}, session, { completed_at: completedAt }), 'map-interview-complete');
     ga4Event('sess.' + session.id, 'map_result_viewed', { stage: (parsed.level && parsed.level.stage) || '' });
     res.json({ result: parsed }); // no parent_email anywhere in the model output
+    // Delivery is server-owned. A browser render error or closed tab must not
+    // prevent the coach notification once the scored result is durable.
+    setImmediate(() => deliverCoachResultById(session.id));
   } catch (e) {
     console.error('score error:', e.message);
     res.status(502).json({ error: 'scoring error' });
@@ -974,6 +981,7 @@ app.post('/api/score/refine', async (req, res) => {
     await db.updateSession(session.id, { report_draft: parsed.parent_report_draft || {}, result: refreshed });
     sendArchiveEmail(session, 'refined assessment', transcript, parsed);
     res.json({ result: parsed });
+    setImmediate(() => deliverCoachResultById(session.id));
   } catch (e) {
     console.error('refine error:', e.message);
     res.status(502).json({ error: 'refine error' });
@@ -1017,6 +1025,7 @@ app.post('/api/skills-score', async (req, res) => {
     sendArchiveEmail(session, 'money scenarios', transcript, parsed); // test-phase recording (gated by ARCHIVE_EMAIL_TO)
     await db.updateSession(session.id, { decision_lab_status: 'completed' });
     res.json({ money_judgment: mj });
+    setImmediate(() => deliverCoachResultById(session.id));
   } catch (e) {
     console.error('skills-score error:', e.message);
     res.status(502).json({ error: 'skills scoring error' });
@@ -1266,32 +1275,86 @@ function coachResultFingerprint(session) {
   }));
 }
 
-// Called after the result has been rendered in the teen's browser. The server
-// ignores all client-authored result content and emails only its stored score.
-app.post('/api/coach-result', async (req, res) => {
-  const s = await currentSession(req);
-  if (!s) return res.status(401).json({ error: 'no active session' });
-  if (s.safety_blocked) return res.json({ success: true, skipped: 'safety' });
-  if (isAdultSession(s) || !programFor(s.program_key)) return res.json({ success: true, skipped: 'not_program_session' });
-  if (!s.interview_complete || !s.result || !s.result.teen_output) return res.status(409).json({ error: 'result not ready' });
-  if (!directMailer) return res.status(503).json({ error: 'coach email is not configured' });
+async function deliverCoachResult(s) {
+  if (!s) return { success: false, skipped: 'no_session' };
+  if (s.safety_blocked) return { success: true, skipped: 'safety' };
+  if (isAdultSession(s) || !programFor(s.program_key)) return { success: true, skipped: 'not_program_session' };
+  if (!s.interview_complete || !s.result || !s.result.teen_output) return { success: false, pending: 'result_not_ready' };
+  if (!directMailer) return { success: false, error: 'coach email is not configured' };
 
   const fingerprint = coachResultFingerprint(s);
   const isUpdate = !!s.coach_report_sent_at;
   const claimed = await db.claimCoachReportSend(s.id, fingerprint);
-  if (!claimed) return res.json({ success: true, duplicate: true });
+  if (!claimed) return { success: true, duplicate: true };
   const email = buildCoachResultEmail(s, isUpdate);
   const to = process.env.COACH_RESULT_TO || 'jay@outsmartthesystem.org';
   try {
     await directMailer.sendMail({ from: process.env.EMAIL_USER, to, subject: email.subject, html: email.html, text: email.text });
     console.log('[COACH_RESULT_SENT]', isUpdate ? 'updated' : 'complete', '->', to, '| sid=' + s.id, '| program=' + s.program_key);
     ghlSync('map_coach_result_sent', s, 'map-coach-result-sent');
-    res.json({ success: true, updated: isUpdate });
+    return { success: true, updated: isUpdate };
   } catch (err) {
     await db.releaseCoachReportSend(s.id, fingerprint);
     console.error('Coach result email error:', err.message, '| sid=' + s.id);
-    res.status(502).json({ error: 'coach result delivery failed' });
+    return { success: false, error: 'coach result delivery failed' };
   }
+}
+
+async function deliverCoachResultById(id) {
+  try {
+    return await deliverCoachResult(await db.getSession(id));
+  } catch (err) {
+    console.error('Coach result background delivery error:', err.message, '| sid=' + id);
+    return { success: false, error: 'background delivery failed' };
+  }
+}
+
+// Called after the result has been rendered in the teen's browser. The server
+// ignores all client-authored result content and emails only its stored score.
+app.post('/api/coach-result', async (req, res) => {
+  const s = await currentSession(req);
+  if (!s) return res.status(401).json({ error: 'no active session' });
+  const out = await deliverCoachResult(s);
+  if (!out.success && out.pending) return res.status(409).json({ error: 'result not ready' });
+  if (!out.success) return res.status(503).json({ error: out.error || 'coach result delivery failed' });
+  res.json(out);
+});
+
+function validRecoveryToken(token) {
+  const got = Buffer.from(sha256(String(token || '')), 'hex');
+  const expected = Buffer.from(LEGACY_RECOVERY_TOKEN_HASH, 'hex');
+  return got.length === expected.length && crypto.timingSafeEqual(got, expected);
+}
+
+// One-time legacy incident recovery. It reveals no scored content: it binds one
+// exact recent completed session to a verified program, sends the coach summary
+// when a result already exists, and mints a fresh one-use link for the teen.
+app.post('/api/ops/recover-legacy-result', async (req, res) => {
+  const b = req.body || {};
+  if (!validRecoveryToken(b.token)) return res.status(404).json({ error: 'not found' });
+  const program = programFor(b.program_key);
+  const parentEmail = String(b.parent_email || '').trim();
+  const teenFirstName = String(b.teen_first_name || '').trim();
+  if (!program || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail) || !teenFirstName) {
+    return res.status(400).json({ error: 'invalid recovery request' });
+  }
+  const legacy = await db.findLegacySession(parentEmail, teenFirstName);
+  if (!legacy) return res.status(404).json({ error: 'one matching completed session was not found' });
+  if (!(await db.claimRecoveryToken(LEGACY_RECOVERY_TOKEN_HASH))) {
+    return res.status(409).json({ error: 'recovery token already used' });
+  }
+  const inviteToken = crypto.randomBytes(24).toString('base64url');
+  const recovered = await db.reconcileLegacySession(legacy.id, program.key, program.label, sha256(inviteToken));
+  if (!recovered) return res.status(409).json({ error: 'session could not be reconciled' });
+  const coach = await deliverCoachResult(recovered);
+  const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+  res.json({
+    success: true,
+    result_ready: !!(recovered.result && recovered.result.teen_output),
+    coach,
+    teen_url: `${base}/?i=${inviteToken}`,
+    expires_at: Math.floor(new Date(recovered.expires_at).getTime() / 1000)
+  });
 });
 
 // ─── SHARE DECLINE ("Keep this private" / "Don't send anything") ────────────
@@ -1575,13 +1638,14 @@ async function fireSafetyAlert(flag, info) {
 // disclosures are purged on the device and handled by the (quote-free) safety
 // alert — they must not land verbatim in an archive inbox.
 function archiveAllowedForSession(session) {
-  return !(session && programFor(session.program_key));
+  // The beta archive created an avoidable privacy leak for legacy sessions that
+  // lacked product identity. It is now retired globally; scored summaries and
+  // quote-free safety alerts are the only operational email paths.
+  return false;
 }
 
 function archiveEnabled(session) {
-  if ((process.env.LAUNCH_MODE || 'beta').toLowerCase() === 'production') return false; // never record in production
-  if (!archiveAllowedForSession(session)) return false; // never archive paid-program transcripts
-  return !!(process.env.ARCHIVE_EMAIL_TO && directMailer);
+  return false;
 }
 
 async function sendArchiveEmail(session, kind, transcript, assessment) {

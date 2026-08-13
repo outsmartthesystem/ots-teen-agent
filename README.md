@@ -147,10 +147,10 @@ See `.env.example`. Full var list:
 | `DATABASE_URL` | Postgres (Render Internal URL) for durable opaque sessions; without it the app runs a NON-durable in-memory store (dev only) and `/api/health` reports `ready:false` |
 | `TEEN_MAKE_WEBHOOK_URL` | the teen agent's **own** Make webhook for the parent report — do **not** reuse the deep-work / Family Money Story webhook |
 | `MAKE_SHARED_SECRET` | sent as `auth` in the parent-report body; the Make scenario filters on it so the webhook isn't an open email relay |
-| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts and coach result summaries (and, in the test phase, session archives) |
+| `EMAIL_USER` / `EMAIL_PASS` | Gmail (app password) the server uses to send safety alerts and coach result summaries |
 | `SAFETY_ALERT_TO` | where CRISIS/ABUSE alerts go (defaults to `EMAIL_USER`) |
 | `COACH_RESULT_TO` | where product-linked scored Map summaries go (defaults to `jay@outsmartthesystem.org`) |
-| `ARCHIVE_EMAIL_TO` | **test phase only**: a full session record (transcript + assessment) may be emailed here for unattributed beta tests; all four paid coaching products are categorically excluded, and clearing it disables recording entirely |
+| `ARCHIVE_EMAIL_TO` | retired compatibility setting; transcript archiving is disabled in code for all sessions |
 | `PUBLIC_BASE_URL` | optional; base for the teen link (else derived from request host) |
 
 ## Deploy (Render)

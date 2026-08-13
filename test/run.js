@@ -135,6 +135,18 @@ test('db: coach report refuses unattributed and safety-blocked sessions', async 
   await db.updateSession(blocked, { interview_complete: true, result, safety_blocked: true });
   eq(await db.claimCoachReportSend(blocked, 'fp'), false, 'safety block -> no routine coach report');
 });
+test('db: one-time legacy recovery attaches product and reissues an invite', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'Legacy Teen', teen_age: 15, parent_first_name: 'P', parent_email: 'legacy@example.com', expires_at: Date.now() + 60000 });
+  await db.updateSession(id, { interview_complete: true, turns: { interview: [{ role: 'user', content: 'done' }] } });
+  const found = await db.findLegacySession('LEGACY@example.com', 'legacy teen');
+  ok(found && found.id === id, 'exact recent legacy session found case-insensitively');
+  eq(await db.claimRecoveryToken('recovery-digest-1'), true, 'recovery token claims once');
+  eq(await db.claimRecoveryToken('recovery-digest-1'), false, 'recovery token cannot replay');
+  const recovered = await db.reconcileLegacySession(id, 'entrepreneurship-program', 'Entrepreneurship Program', 'new-invite-hash');
+  eq(recovered.program_key, 'entrepreneurship-program', 'product attached');
+  eq(recovered.invite_used_at, null, 'fresh invite is unclaimed');
+});
 
 // ─────────────────────── server helpers ──────────────────────
 test('formatTranscript: labels, seed filtered, separator', () => {
@@ -172,10 +184,10 @@ test('programFor: recognizes exactly the four paid product keys', () => {
   eq(srv.programFor('teen-investing-starter').label, 'Teen Investing Starter');
   eq(srv.programFor('unknown'), null, 'unknown fails closed');
 });
-test('archiveAllowedForSession: paid program transcripts always fail closed', () => {
+test('archiveAllowedForSession: transcript archives are retired globally', () => {
   ['entrepreneurship-program', 'investing-mastermind', 'teen-side-hustle', 'teen-investing-starter']
     .forEach(program_key => eq(srv.archiveAllowedForSession({ program_key }), false, program_key + ' never archived'));
-  eq(srv.archiveAllowedForSession({}), true, 'unattributed beta test retains the existing archive gate');
+  eq(srv.archiveAllowedForSession({}), false, 'legacy/unattributed sessions never archived either');
 });
 test('buildGhlPayload: completion carries product identity and no scored result', () => {
   const payload = srv.buildGhlPayload('map_interview_complete', {
