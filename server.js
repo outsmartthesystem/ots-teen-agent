@@ -1327,8 +1327,8 @@ function validRecoveryToken(token) {
 }
 
 // One-time legacy incident recovery. It reveals no scored content: it binds one
-// exact recent completed session to a verified program, sends the coach summary
-// when a result already exists, and mints a fresh one-use link for the teen.
+// exact recent session to a verified program, sends the coach summary when a
+// result already exists, and mints a fresh one-use link so the teen can resume.
 app.post('/api/ops/recover-legacy-result', async (req, res) => {
   const b = req.body || {};
   if (!validRecoveryToken(b.token)) return res.status(404).json({ error: 'not found' });
@@ -1350,7 +1350,11 @@ app.post('/api/ops/recover-legacy-result', async (req, res) => {
   const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
   res.json({
     success: true,
+    interview_complete: !!recovered.interview_complete,
     result_ready: !!(recovered.result && recovered.result.teen_output),
+    saved_turns: recovered.turns && Array.isArray(recovered.turns.interview)
+      ? recovered.turns.interview.filter(turn => turn && turn.content !== SEED_MARKER).length
+      : 0,
     coach,
     teen_url: `${base}/?i=${inviteToken}`,
     expires_at: Math.floor(new Date(recovered.expires_at).getTime() / 1000)

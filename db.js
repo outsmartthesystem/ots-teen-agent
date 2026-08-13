@@ -261,8 +261,8 @@ async function releaseCoachReportSend(id, fingerprint) {
 }
 
 // Locate one recent legacy session by the identity the parent originally
-// supplied. Ambiguous matches fail closed and safety-blocked sessions are never
-// recoverable. No result content is returned to an unauthenticated caller.
+// supplied. It may be scored, waiting for scoring, or interrupted mid-interview.
+// Ambiguous matches fail closed and safety-blocked sessions are never recoverable.
 async function findLegacySession(parentEmail, teenFirstName) {
   const email = String(parentEmail || '').trim().toLowerCase();
   const teen = String(teenFirstName || '').trim().toLowerCase();
@@ -273,7 +273,6 @@ async function findLegacySession(parentEmail, teenFirstName) {
        WHERE lower(trim(parent_email)) = $1
          AND lower(trim(teen_first_name)) = $2
          AND safety_blocked = false
-         AND interview_complete = true
          AND expires_at > now()
          AND created_at > now() - interval '21 days'
        ORDER BY created_at DESC
@@ -283,7 +282,7 @@ async function findLegacySession(parentEmail, teenFirstName) {
   const matches = Array.from(mem.values()).filter(row =>
     String(row.parent_email || '').trim().toLowerCase() === email &&
     String(row.teen_first_name || '').trim().toLowerCase() === teen &&
-    !row.safety_blocked && row.interview_complete &&
+    !row.safety_blocked &&
     new Date(row.expires_at).getTime() > Date.now() &&
     Date.now() - new Date(row.created_at).getTime() < 21 * 864e5);
   matches.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -304,13 +303,12 @@ async function reconcileLegacySession(id, programKey, programLabel, inviteTokenH
            expires_at = GREATEST(expires_at, now() + interval '7 days')
        WHERE id = $1
          AND safety_blocked = false
-         AND interview_complete = true
          AND (program_key IS NULL OR program_key = '' OR program_key = $2)
        RETURNING *`, [id, programKey, programLabel, inviteTokenHash]);
     return r.rows[0] || null;
   }
   const row = mem.get(id);
-  if (!row || row.safety_blocked || !row.interview_complete ||
+  if (!row || row.safety_blocked ||
       (row.program_key && row.program_key !== programKey)) return null;
   row.program_key = programKey;
   row.program_label = programLabel;
