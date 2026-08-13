@@ -1338,8 +1338,23 @@ app.post('/api/ops/recover-legacy-result', async (req, res) => {
   if (!program || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail) || !teenFirstName) {
     return res.status(400).json({ error: 'invalid recovery request' });
   }
+  if (b.inspect === true) {
+    const candidates = await db.findLegacyCandidates(parentEmail, teenFirstName);
+    return res.json({ candidates: candidates.map(s => ({
+      teen_first_name: s.teen_first_name,
+      teen_age: s.teen_age,
+      parent_email: s.parent_email,
+      program_key: s.program_key || '',
+      created_at: s.created_at,
+      interview_complete: !!s.interview_complete,
+      result_ready: !!(s.result && s.result.teen_output),
+      saved_turns: s.turns && Array.isArray(s.turns.interview)
+        ? s.turns.interview.filter(turn => turn && turn.content !== SEED_MARKER).length
+        : 0
+    })) });
+  }
   const legacy = await db.findLegacySession(parentEmail, teenFirstName);
-  if (!legacy) return res.status(404).json({ error: 'one matching completed session was not found' });
+  if (!legacy) return res.status(404).json({ error: 'one matching recent session was not found' });
   if (!(await db.claimRecoveryToken(LEGACY_RECOVERY_TOKEN_HASH))) {
     return res.status(409).json({ error: 'recovery token already used' });
   }

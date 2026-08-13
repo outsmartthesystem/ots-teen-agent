@@ -141,6 +141,8 @@ test('db: one-time legacy recovery resumes an incomplete session', async () => {
   await db.updateSession(id, { turns: { interview: [{ role: 'user', content: 'saved answer' }] } });
   const found = await db.findLegacySession('LEGACY@example.com', 'legacy teen');
   ok(found && found.id === id && !found.interview_complete, 'exact interrupted session found case-insensitively');
+  const candidates = await db.findLegacyCandidates('wrong@example.com', 'legacy');
+  ok(candidates.some(row => row.id === id), 'metadata lookup tolerates a longer teen name');
   eq(await db.claimRecoveryToken('recovery-digest-1'), true, 'recovery token claims once');
   eq(await db.claimRecoveryToken('recovery-digest-1'), false, 'recovery token cannot replay');
   const recovered = await db.reconcileLegacySession(id, 'entrepreneurship-program', 'Entrepreneurship Program', 'new-invite-hash');
