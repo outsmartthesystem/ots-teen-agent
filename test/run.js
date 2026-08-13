@@ -135,12 +135,12 @@ test('db: coach report refuses unattributed and safety-blocked sessions', async 
   await db.updateSession(blocked, { interview_complete: true, result, safety_blocked: true });
   eq(await db.claimCoachReportSend(blocked, 'fp'), false, 'safety block -> no routine coach report');
 });
-test('db: one-time legacy recovery attaches product and reissues an invite', async () => {
+test('db: one-time legacy recovery resumes an incomplete session', async () => {
   const id = nid();
   await db.createSession({ id, teen_first_name: 'Legacy Teen', teen_age: 15, parent_first_name: 'P', parent_email: 'legacy@example.com', expires_at: Date.now() + 60000 });
-  await db.updateSession(id, { interview_complete: true, turns: { interview: [{ role: 'user', content: 'done' }] } });
+  await db.updateSession(id, { turns: { interview: [{ role: 'user', content: 'saved answer' }] } });
   const found = await db.findLegacySession('LEGACY@example.com', 'legacy teen');
-  ok(found && found.id === id, 'exact recent legacy session found case-insensitively');
+  ok(found && found.id === id && !found.interview_complete, 'exact interrupted session found case-insensitively');
   eq(await db.claimRecoveryToken('recovery-digest-1'), true, 'recovery token claims once');
   eq(await db.claimRecoveryToken('recovery-digest-1'), false, 'recovery token cannot replay');
   const recovered = await db.reconcileLegacySession(id, 'entrepreneurship-program', 'Entrepreneurship Program', 'new-invite-hash');
