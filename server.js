@@ -56,10 +56,6 @@ const PROGRAMS = Object.freeze({
   'teen-side-hustle': 'Teen Side Hustle Launch',
   'teen-investing-starter': 'Teen Investing Starter'
 });
-// Temporary, one-time incident recovery credential. Only the digest is shipped;
-// the plaintext is held by the operator, consumed once in Postgres, then this
-// route and digest are removed after the recovery is verified.
-const LEGACY_RECOVERY_TOKEN_HASH = 'f7be75df84d5cfc6cb875423d80e5054d4c4a16342d0f0ddacfd852b13d33972';
 function programFor(key) {
   const k = String(key || '').trim();
   return Object.prototype.hasOwnProperty.call(PROGRAMS, k) ? { key: k, label: PROGRAMS[k] } : null;
@@ -1318,62 +1314,6 @@ app.post('/api/coach-result', async (req, res) => {
   if (!out.success && out.pending) return res.status(409).json({ error: 'result not ready' });
   if (!out.success) return res.status(503).json({ error: out.error || 'coach result delivery failed' });
   res.json(out);
-});
-
-function validRecoveryToken(token) {
-  const got = Buffer.from(sha256(String(token || '')), 'hex');
-  const expected = Buffer.from(LEGACY_RECOVERY_TOKEN_HASH, 'hex');
-  return got.length === expected.length && crypto.timingSafeEqual(got, expected);
-}
-
-// One-time legacy incident recovery. It reveals no scored content: it binds one
-// exact recent session to a verified program, sends the coach summary when a
-// result already exists, and mints a fresh one-use link so the teen can resume.
-app.post('/api/ops/recover-legacy-result', async (req, res) => {
-  const b = req.body || {};
-  if (!validRecoveryToken(b.token)) return res.status(404).json({ error: 'not found' });
-  const program = programFor(b.program_key);
-  const parentEmail = String(b.parent_email || '').trim();
-  const teenFirstName = String(b.teen_first_name || '').trim();
-  if (!program || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parentEmail) || !teenFirstName) {
-    return res.status(400).json({ error: 'invalid recovery request' });
-  }
-  if (b.inspect === true) {
-    const candidates = await db.findLegacyCandidates(parentEmail, teenFirstName);
-    return res.json({ candidates: candidates.map(s => ({
-      teen_first_name: s.teen_first_name,
-      teen_age: s.teen_age,
-      parent_email: s.parent_email,
-      program_key: s.program_key || '',
-      created_at: s.created_at,
-      interview_complete: !!s.interview_complete,
-      result_ready: !!(s.result && s.result.teen_output),
-      saved_turns: s.turns && Array.isArray(s.turns.interview)
-        ? s.turns.interview.filter(turn => turn && turn.content !== SEED_MARKER).length
-        : 0
-    })) });
-  }
-  const legacy = await db.findLegacySession(parentEmail, teenFirstName);
-  if (!legacy) return res.status(404).json({ error: 'one matching recent session was not found' });
-  if (!(await db.claimRecoveryToken(LEGACY_RECOVERY_TOKEN_HASH))) {
-    return res.status(409).json({ error: 'recovery token already used' });
-  }
-  const inviteToken = crypto.randomBytes(24).toString('base64url');
-  const recovered = await db.reconcileLegacySession(legacy.id, program.key, program.label, sha256(inviteToken));
-  if (!recovered) return res.status(409).json({ error: 'session could not be reconciled' });
-  const coach = await deliverCoachResult(recovered);
-  const base = (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
-  res.json({
-    success: true,
-    interview_complete: !!recovered.interview_complete,
-    result_ready: !!(recovered.result && recovered.result.teen_output),
-    saved_turns: recovered.turns && Array.isArray(recovered.turns.interview)
-      ? recovered.turns.interview.filter(turn => turn && turn.content !== SEED_MARKER).length
-      : 0,
-    coach,
-    teen_url: `${base}/?i=${inviteToken}`,
-    expires_at: Math.floor(new Date(recovered.expires_at).getTime() / 1000)
-  });
 });
 
 // ─── SHARE DECLINE ("Keep this private" / "Don't send anything") ────────────
