@@ -22,21 +22,49 @@
   // self-signup (their own name/email/age, self-consent, their own copy).
   function isAdultMode() { return document.getElementById('teenAge').value === '18plus'; }
 
+  // Program attribution. Tagging a Map to an OTS program is what routes the final
+  // scored Map to that program's coach (server-side). Coach delivery is skipped for
+  // 18+ self-signup sessions, so the field is hidden (and cleared) in adult mode
+  // rather than promising a hand-off that will not happen.
+  const programEl = document.getElementById('programKey');
+  let lastProgram = '';
+  function selectedProgram() {
+    if (isAdultMode() || !programEl) return '';
+    return programEl.value || '';
+  }
+  function applyProgramNote() {
+    const key = selectedProgram();
+    const opt = key && programEl.options[programEl.selectedIndex];
+    setText('programNoteName', opt ? opt.textContent : 'a program');
+    show('programNote', !!key);
+  }
+  if (programEl) programEl.addEventListener('change', function () {
+    lastProgram = programEl.value; // the person's own choice, including "none"
+    applyProgramNote();
+  });
+
   function applyMode() {
     const adult = isAdultMode();
     show('adultAgeField', adult);       // exact 18+ age input
     show('teenNameField', !adult);      // no separate "teen" in self-signup
     show('teenAgeAdult', adult);        // "you're setting this up for yourself" note
+    show('programField', !adult);       // coach hand-off does not apply to 18+ Maps
+    // Adult mode blanks the control so no tag can be submitted, but the person's
+    // actual choice is held in lastProgram and restored on the way back. Silently
+    // losing the program is the exact failure this field exists to prevent, and an
+    // explicit "Not part of a program" is a choice too, so it must survive as well.
+    if (programEl) programEl.value = adult ? '' : lastProgram;
+    applyProgramNote();
     if (adult) {
-      setText('pageH1', 'Your Money & Momentum Map — see what you actually want, and what’s quietly slowing you down.');
+      setText('pageH1', 'Your Money & Momentum Map. See what you actually want, and what’s quietly slowing you down.');
       setText('pageLede', 'A private System Map for you: what you want, what’s already working, the one habit slowing your momentum, and one move to try this week. About 15–20 minutes.');
-      setText('introBlock', 'This is for you. You do it on your own and see your result first. Nothing is shared with anyone — at the end you choose whether to email yourself a copy. This is not a crisis service, therapy, or a clinical assessment; if something you say raises a serious safety concern, it may pause and show resources, and in rare cases a designated OTS responder may review a minimal safety alert.');
-      setText('emailLabel', 'Your email — where your copy comes if you want one');
+      setText('introBlock', 'This is for you. You do it on your own and see your result first. Nothing is shared with anyone. At the end you choose whether to email yourself a copy. This is not a crisis service, therapy, or a clinical assessment; if something you say raises a serious safety concern, it may pause and show resources, and in rare cases a designated OTS responder may review a minimal safety alert.');
+      setText('emailLabel', 'Your email (where your copy comes if you want one)');
       setText('ageLabel', 'Your age');
-      setText('consentText', 'I’m 18 or older, and I understand this is a money-and-momentum snapshot — not a crisis service, therapy, or a clinical assessment.');
+      setText('consentText', 'I’m 18 or older, and I understand this is a money-and-momentum snapshot, not a crisis service, therapy, or a clinical assessment.');
       submitBtn.textContent = adultBtnLabel;
     } else {
-      setText('emailLabel', 'Your email — where your teen’s approved report comes');
+      setText('emailLabel', 'Your email (where your teen’s approved report comes)');
       setText('ageLabel', 'Their age');
       submitBtn.textContent = teenBtnLabel;
     }
@@ -74,20 +102,25 @@
     submitBtn.disabled = true;
     submitBtn.textContent = 'Creating…';
 
+    const programKey = selectedProgram();
+
     try {
+      // "Your first name" (parentName) is the parent in teen mode and the adult
+      // themselves in adult mode, so it's always the parent_first_name. Only the
+      // teen_first_name differs: the teen's name (teen mode) or the adult's (self).
+      const payload = {
+        parent_first_name: parentName,
+        parent_email: parentEmail,
+        teen_first_name: personName,
+        teen_age: age,
+        consent: true
+      };
+      // Only send the key when one is chosen; the server rejects an unknown key.
+      if (programKey) payload.program_key = programKey;
       const r = await fetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // "Your first name" (parentName) is the parent in teen mode and the adult
-          // themselves in adult mode — so it's always the parent_first_name. Only the
-          // teen_first_name differs: the teen's name (teen mode) or the adult's (self).
-          parent_first_name: parentName,
-          parent_email: parentEmail,
-          teen_first_name: personName,
-          teen_age: age,
-          consent: true
-        })
+        body: JSON.stringify(payload)
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'Something went wrong.');
@@ -101,7 +134,7 @@
         show('againBtn', false);
       } else {
         setText('successHeading', "Here's " + personName + "'s private link");
-        setText('sendGuide', 'Send this to ' + personName + ' — text it, AirDrop it, or open it on their phone. It’s just for them.');
+        setText('sendGuide', 'Send this to ' + personName + '. Text it, AirDrop it, or open it on their phone. It’s just for them.');
       }
       form.style.display = 'none';
       success.classList.add('show');
@@ -129,9 +162,28 @@
     submitBtn.disabled = false;
     submitBtn.textContent = 'Create my teen’s link';
     ['parentNameErr', 'parentEmailErr', 'teenNameErr', 'teenAgeErr'].forEach(id => showFieldError(id, false));
+    // form.reset() clears the program too, so re-apply the link's program and
+    // re-sync the dependent copy (onboarding several teens into one program is
+    // the common case for a coach).
+    applyProgramPrefill();
+    applyMode();
   });
 
-  // PR E: payment gate — when enabled, the parent pays upfront (Stripe) before
+  // Pre-tag the form from the link: /register.html?program=entrepreneurship-program
+  // lets a coach hand a parent a program-tagged setup link, so the PARENT completes
+  // their own consent while the Map still routes to the coach. An unrecognized key
+  // is ignored (the server would reject it anyway).
+  function applyProgramPrefill() {
+    if (!programEl) return;
+    const want = new URLSearchParams(location.search).get('program');
+    if (!want) return;
+    const match = Array.prototype.find.call(programEl.options, o => o.value && o.value === want);
+    if (match) { programEl.value = match.value; lastProgram = match.value; }
+  }
+  applyProgramPrefill();
+  applyProgramNote();
+
+  // PR E: payment gate: when enabled, the parent pays upfront (Stripe) before
   // the form is shown. Beta (payment_required=false) leaves the form open.
   (async function initPayGate() {
     const params = new URLSearchParams(location.search);

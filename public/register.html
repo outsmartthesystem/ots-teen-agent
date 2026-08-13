@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Outsmart the System — Teen Money &amp; Momentum Map · Set up</title>
+  <title>Outsmart the System · Teen Money &amp; Momentum Map · Set up</title>
   <style>
     :root {
       color-scheme: dark;
@@ -68,13 +68,13 @@
 <body>
   <div class="wrap">
     <div class="pill">Outsmart the System</div>
-    <h1 id="pageH1">See what your teen actually wants — and what’s quietly getting in the way.</h1>
-    <p class="lede" id="pageLede">The <strong>Money &amp; Momentum Map</strong> gives your teen a private System Map, and gives you a teen-approved guide for how to support them — without nagging, lecturing, or taking over. About 15–20 minutes, on their own.</p>
+    <h1 id="pageH1">See what your teen actually wants, and what’s quietly getting in the way.</h1>
+    <p class="lede" id="pageLede">The <strong>Money &amp; Momentum Map</strong> gives your teen a private System Map, and gives you a teen-approved guide for how to support them, without nagging, lecturing, or taking over. About 15–20 minutes, on their own.</p>
 
     <div class="card">
       <div class="pay-gate" id="payGate" style="display:none">
         <div class="pay-price">$47</div>
-        <p class="pay-desc">The full Teen Money &amp; Momentum Map — your teen's private System Map, the Decision Lab, a premium PDF, and a teen-approved guide for you. One-time.</p>
+        <p class="pay-desc">The full Teen Money &amp; Momentum Map: your teen's private System Map, the Decision Lab, a premium PDF, and a teen-approved guide for you. One-time.</p>
         <button class="btn" id="payBtn" type="button">Pay $47 &amp; set up →</button>
         <p class="fine">You'll pay securely on Stripe, then come back here to create your teen's link.</p>
       </div>
@@ -83,7 +83,7 @@
         <div class="consent" id="introBlock">
           <strong>Your teen drives this.</strong> They do it on their own and see their
           result first. Before anything reaches you, they preview exactly what’s in it
-          and choose what to share. You’ll get a thoughtful, teen-approved snapshot —
+          and choose what to share. You’ll get a thoughtful, teen-approved snapshot,
           not a report card.
           <br><br>
           <strong>If this Map is part of an OTS coaching program.</strong> The designated
@@ -104,7 +104,7 @@
         <input id="parentName" autocomplete="given-name" maxlength="40">
         <div class="field-error" id="parentNameErr">Please add your first name.</div>
 
-        <label for="parentEmail" id="emailLabel">Your email <span style="opacity:.7">— where your teen’s approved report comes</span></label>
+        <label for="parentEmail" id="emailLabel">Your email <span style="opacity:.7">(where your teen’s approved report comes)</span></label>
         <input id="parentEmail" type="email" autocomplete="email">
         <div class="field-error" id="parentEmailErr">Please enter a valid email.</div>
 
@@ -126,7 +126,19 @@
           <input id="adultAge" type="number" inputmode="numeric" min="18" max="99" placeholder="e.g. 22">
           <div class="field-error" id="adultAgeErr">Please enter your age (18 or older).</div>
         </div>
-        <div class="field-note" id="teenAgeAdult" style="display:none">You’re setting this up for <strong>yourself</strong> — you’ll get your own private Map and choose whether to email yourself a copy. No parent involved.</div>
+        <div class="field-note" id="teenAgeAdult" style="display:none">You’re setting this up for <strong>yourself</strong>. You’ll get your own private Map and choose whether to email yourself a copy. No parent involved.</div>
+
+        <div id="programField">
+          <label for="programKey">Is this part of an OTS program?</label>
+          <select id="programKey">
+            <option value="">Not part of a program</option>
+            <option value="entrepreneurship-program">Entrepreneurship Program</option>
+            <option value="investing-mastermind">Investing Mastermind</option>
+            <option value="teen-side-hustle">Teen Side Hustle Launch</option>
+            <option value="teen-investing-starter">Teen Investing Starter</option>
+          </select>
+          <div class="field-note" id="programNote" style="display:none">Because this Map is part of <strong id="programNoteName">a program</strong>, the designated program coach receives your teen’s final scored Map so they can prepare for coaching. The coach does not receive raw answers, the transcript, or safety content. What your parent-facing report contains is still entirely your teen’s choice.</div>
+        </div>
 
         <label class="check"><input type="checkbox" id="consent"> <span id="consentText">I understand this is a money-and-momentum snapshot for teens, <strong>not</strong> a crisis service, therapy, or a clinical assessment. If issued through an OTS coaching program, the designated coach receives the final scored Map without raw answers or transcript.</span></label>
         <div class="field-error" id="consentErr">Please confirm you understand this before continuing.</div>
@@ -140,7 +152,7 @@
       <div class="success" id="success">
         <div class="pill" style="color:var(--good)">Ready</div>
         <h2 id="successHeading">Here’s your teen’s private link</h2>
-        <p class="send-guide" id="sendGuide">Send this to them — text it, AirDrop it, or open it on their phone. It’s just for them.</p>
+        <p class="send-guide" id="sendGuide">Send this to them. Text it, AirDrop it, or open it on their phone. It’s just for them.</p>
         <button class="btn" id="startBtn" type="button" style="display:none;margin:4px 0 14px">Start my Map →</button>
         <div class="link-row">
           <input id="teenLink" readonly>
@@ -152,10 +164,10 @@
     </div>
 
     <div class="info">
-      <div class="info-block"><h3>What your teen gets</h3><p>A private System Map — what they want, what’s already working, the one habit slowing them down, and one move to try this week.</p></div>
+      <div class="info-block"><h3>What your teen gets</h3><p>A private System Map: what they want, what’s already working, the one habit slowing them down, and one move to try this week.</p></div>
       <div class="info-block"><h3>What you may receive</h3><p>Only what your teen approves, line by line: what matters to them, a strength, one skill to build, a conversation starter, and how they’d like your support.</p></div>
       <div class="info-block"><h3>What you’ll never receive</h3><p>Their raw answers, anything they kept private, or anything safety-related. You’re never told what they left out.</p></div>
-      <div class="info-block"><h3>Why teens answer honestly</h3><p>Because it starts with them. They see their result first and control what’s shared — so they tell the truth instead of performing.</p></div>
+      <div class="info-block"><h3>Why teens answer honestly</h3><p>Because it starts with them. They see their result first and control what’s shared, so they tell the truth instead of performing.</p></div>
       <div class="info-block"><h3>What this is not</h3><p>Not a clinical evaluation, not a way to catch your teen, not a punishment tool, not a replacement for parenting, and not a financial-literacy quiz.</p></div>
       <div class="info-note">One ask: don’t sit next to them or ask to see their raw answers. The value comes from honest ownership.</div>
     </div>
