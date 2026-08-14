@@ -115,6 +115,27 @@ test('db: deleteExpired keeps a recent unshared result', async () => {
   await db.deleteExpired(7);
   ok(await db.getSession(id), 'recent unshared result kept');
 });
+test('db: releaseReportSend reopens a failed send for retry; decline stays closed', async () => {
+  const id = nid();
+  await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  eq(await db.claimReportSend(id), true, 'claim wins');
+  await db.releaseReportSend(id); // webhook failed: undo BOTH report_sent and sharing_status
+  const row = await db.getSession(id);
+  eq(row.sharing_status, 'pending', 'sharing reopened');
+  eq(await db.claimReportSend(id), true, 'retry can claim again (send is once-successful, not once-attempted)');
+  // a decline is NOT reversible by release
+  const id2 = nid();
+  await db.createSession({ id: id2, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
+  await db.updateSession(id2, { sharing_status: 'declined' });
+  await db.releaseReportSend(id2);
+  eq((await db.getSession(id2)).sharing_status, 'declined', 'declined stays declined');
+});
+test('db: releasePaymentSession refunds a burned claim after our failure', async () => {
+  const sid = 'cs_rel_' + nid();
+  eq(await db.claimPaymentSession(sid), true, 'claimed');
+  await db.releasePaymentSession(sid);
+  eq(await db.claimPaymentSession(sid), true, 'claimable again after release');
+});
 test('db: claimPaymentSession is one-time per Stripe session id', async () => {
   const sid = 'cs_' + nid();
   eq(await db.claimPaymentSession(sid), true, 'first claim wins');

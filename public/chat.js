@@ -67,7 +67,7 @@ async function boot() {
       const j = await r.json();
       if (!r.ok) {
         return showError(r.status === 410
-          ? "This private link has already been used. Ask whoever set it up to create a fresh one."
+          ? "This link isn’t active anymore (the Map may already be finished, or the link expired). Ask whoever set it up to create a fresh one."
           : (j.error || 'Could not start the session.'));
       }
       session = j;
@@ -138,7 +138,7 @@ async function recoverResult(session) {
   } catch (e) { /* fall through */ }
   showError(session.report_sent
     ? "This check is already done, your result was shared the way you chose. Nice work."
-    : "This check is already complete.");
+    : "This check is already complete. If you saved a PDF, it’s on the device you used. If not, ask whoever set this up for a fresh link and you can take it again.");
 }
 
 // 3-card onboarding before the interview (replaces the long opening message).
@@ -161,28 +161,82 @@ function showOnboarding() {
 
 // Deterministic age confirmation, the interview can't start until this passes
 // (server-enforced: /api/interview/turn 409s until teen_age_confirmed_at is set).
-// Under-13 (COPPA) and 18+ are routed out server-side and the session is purged.
+// NOT a trapdoor: an age that would end or reroute the session gets an explicit
+// "you put N, is that right?" double-check BEFORE it is ever submitted, and a
+// confirmed 18+ on a teen link keeps the session alive (server: recoverable) so
+// a typo can be fixed on the spot. Only a CONFIRMED under-13 (COPPA) or a
+// confirmed minor on an adult self-signup link still closes the session.
 function showAgeCheck() {
   showScreen('agecheck');
   const valEl = document.getElementById('ageVal');
   if (valEl) valEl.textContent = String(window.session.teen_age);
   const yes = document.getElementById('ageYes');
   const no = document.getElementById('ageNo');
-  const correctBox = document.getElementById('ageCorrect');
-  const input = document.getElementById('ageInput');
-  const save = document.getElementById('ageSave');
   if (yes) yes.onclick = () => confirmAge(window.session.teen_age);
-  if (no) no.onclick = () => { if (correctBox) correctBox.style.display = 'block'; if (input) { input.value = ''; input.focus(); } };
-  if (save) save.onclick = () => { const v = Number(input.value); if (!Number.isInteger(v)) { input.focus(); return; } confirmAge(v); };
+  if (no) no.onclick = () => showAgeCorrection('');
 }
 
-async function confirmAge(age) {
+function showAgeCorrection(hint) {
+  const correctBox = document.getElementById('ageCorrect');
+  const input = document.getElementById('ageInput');
+  const block = document.getElementById('ageBlock');
+  const save = document.getElementById('ageSave');
+  if (block) { block.style.display = hint ? 'block' : 'none'; block.textContent = hint || ''; }
+  if (correctBox) correctBox.style.display = 'block';
+  if (input) { input.value = ''; input.focus(); }
+  if (save) save.onclick = () => { const v = Number(input.value); if (!Number.isInteger(v) || v < 5 || v > 120) { input.focus(); return; } confirmAge(v); };
+}
+
+// Which lane-terminal case (if any) does this age hit? null = proceeds normally.
+function ageTerminalKind(age) {
+  if (age < 13) return 'under_13';
+  const adultLink = !!(window.session && window.session.is_adult);
+  if (adultLink && age < 18) return 'need_adult';
+  if (!adultLink && age >= 18) return 'adult';
+  return null;
+}
+
+// One deliberate double-check before any terminal age is submitted: a slipped
+// digit must never cost the session. "Yes, that's right" submits for real.
+function confirmAge(age) {
+  age = Number(age);
+  if (!ageTerminalKind(age)) return submitAge(age);
+  const block = document.getElementById('ageBlock');
+  const buttons = document.getElementById('ageButtons');
+  const correct = document.getElementById('ageCorrect');
+  if (buttons) buttons.style.display = 'none';
+  if (correct) correct.style.display = 'none';
+  if (!block) return submitAge(age); // markup missing: fall through rather than dead-end
+  block.style.display = 'block';
+  block.innerHTML = '';
+  const q = document.createElement('p');
+  q.className = 'onboard-p';
+  q.style.margin = '0 0 12px';
+  q.textContent = 'Quick double-check: you put ' + age + '. Is that right?';
+  const row = document.createElement('div');
+  row.className = 'btn-row';
+  const yesBtn = document.createElement('button');
+  yesBtn.type = 'button'; yesBtn.className = 'btn btn-primary';
+  yesBtn.textContent = 'Yes, I’m ' + age;
+  yesBtn.onclick = () => { block.style.display = 'none'; submitAge(age); };
+  const fixBtn = document.createElement('button');
+  fixBtn.type = 'button'; fixBtn.className = 'btn btn-ghost';
+  fixBtn.textContent = 'Oops, let me fix it';
+  fixBtn.onclick = () => { block.style.display = 'none'; showAgeCorrection(''); };
+  row.appendChild(yesBtn); row.appendChild(fixBtn);
+  block.appendChild(q); block.appendChild(row);
+}
+
+let ageSubmitting = false; // no double-submit: two fast taps must not race two confirms
+async function submitAge(age) {
+  if (ageSubmitting) return;
+  ageSubmitting = true;
   try {
     const r = await fetch('/api/session/confirm-age', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ age: Number(age) })
     });
-    const j = await r.json();
+    let j = null; try { j = await r.json(); } catch (e2) {}
     if (j && j.ok) {
       window.session.teen_age = j.teen_age;
       window.session.teen_age_plus_3 = j.teen_age + 3;
@@ -190,24 +244,37 @@ async function confirmAge(age) {
       startInterview();
       return;
     }
-    // Routed out (under 13 or 18+): the server already purged the session.
-    const block = document.getElementById('ageBlock');
-    const buttons = document.getElementById('ageButtons');
-    const correct = document.getElementById('ageCorrect');
-    if (buttons) buttons.style.display = 'none';
-    if (correct) correct.style.display = 'none';
-    if (block) {
-      block.style.display = 'block';
-      block.textContent = (j && j.reason === 'under_13')
-        ? 'Thanks for being honest. This one’s built for ages 13 and up, so we’ll stop here, nothing was saved.'
-        : (j && j.reason === 'need_adult')
-          ? 'This link was set up as the adult (18+) Map, but the age you entered is under 18. Nothing was saved, ask for a teen link instead.'
-          : 'Thanks! This link was set up as the teen (13–17) Map. Since you’re 18 or older, head back and choose “18 or older” to set up your own Map. Nothing was saved.';
+    if (j && j.reason === 'adult') {
+      // Recoverable: the server kept the session. Offer the fix path and the
+      // adult door, no dead end either way.
+      const buttons = document.getElementById('ageButtons');
+      if (buttons) buttons.style.display = 'none';
+      showAgeCorrection('This link was set up for a teen aged 13 to 17. If 18+ is really you, ask whoever set this up to use the "18 or older" option at the setup page, and you’ll get your own private Map. If it was a typo, just fix your age below.');
+      return;
     }
-    window.halted = true;
+    if (j && (j.reason === 'under_13' || j.reason === 'need_adult')) {
+      // The two legally-required closures: honest, final, with the next step named.
+      const block = document.getElementById('ageBlock');
+      const buttons = document.getElementById('ageButtons');
+      const correct = document.getElementById('ageCorrect');
+      if (buttons) buttons.style.display = 'none';
+      if (correct) correct.style.display = 'none';
+      if (block) {
+        block.style.display = 'block';
+        block.textContent = (j.reason === 'under_13')
+          ? 'Thanks for being honest. This one’s built for ages 13 and up, so we’ll stop here. Nothing was saved.'
+          : 'This link was set up as the adult (18+) Map, but the age you entered is under 18. Nothing was saved. Ask your parent to set up a teen link instead.';
+      }
+      window.halted = true;
+      return;
+    }
+    // Anything else (network blip mid-response, 401 race, server hiccup): NOT a
+    // verdict on their age. Reopen the input with a retry message, never a dead end.
+    showAgeCorrection('Hmm, that didn’t go through. Check your connection and enter your age again.');
   } catch (e) {
-    const block = document.getElementById('ageBlock');
-    if (block) { block.style.display = 'block'; block.textContent = 'Couldn’t confirm just now, check your connection and try again.'; }
+    showAgeCorrection('Hmm, that didn’t go through. Check your connection and enter your age again.');
+  } finally {
+    ageSubmitting = false;
   }
 }
 
@@ -809,7 +876,11 @@ async function sendSelfReport(btn) {
 // share isn't left in limbo. Ends the session (clears the cookie) and confirms.
 async function keepPrivate() {
   const parent = window.session.parent_first_name;
-  if (!confirm('Keep this private from ' + parent + '? Jay still receives the scored Map for coaching, without your raw answers.')) return;
+  // The coach line is only true for program sessions; a plain $47 Map goes to no one.
+  const coachNote = window.session.program_key
+    ? ' Jay still receives the scored Map for coaching, without your raw answers.'
+    : ' No one receives it.';
+  if (!confirm('Keep this private from ' + parent + '? This is final (it can’t be shared later).' + coachNote)) return;
   declineShare();
 }
 
@@ -907,6 +978,13 @@ async function refineResult(correction) {
       body: JSON.stringify({ correction: text })
     });
     const data = await r.json();
+    if (r.status === 429) {
+      // Cap reached: telling the truth beats a retry that can never work.
+      if (rb) { rb.disabled = true; rb.textContent = 'Refine limit reached'; }
+      const wrap = document.getElementById('accuracyCheck');
+      if (wrap) wrap.appendChild(elem('div', 'ac-err', 'You’ve refined this twice, that’s the max. Your current result stands, and you can still save it or share it below.'));
+      return;
+    }
     if (!r.ok || !data.result) throw new Error((data && data.error) || 'refine failed');
     window.scoringResult = data.result;
     window.accuracyAnswer = null;

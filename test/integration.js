@@ -89,6 +89,9 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
     const wrong = await (await post('/api/session/confirm-age', { age: 15 }, cookie2)).json();
     assert.strictEqual(wrong.ok, false, 'adult link rejects under-18');
     assert.strictEqual(wrong.reason, 'need_adult', 'reason need_adult');
+    // Legally load-bearing: an adult self-signup lane has no parental consent, so a
+    // confirmed minor's session must actually be purged, not just refused.
+    assert.strictEqual((await get('/api/session', cookie2)).status, 401, 'need_adult session purged');
   });
 
   await t('teen session cannot use the adult self-report endpoint', async () => {
@@ -99,14 +102,22 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
     assert.strictEqual(teenSelf.status, 400, 'teen session -> 400 on /api/self-report');
   });
 
-  await t('age gate: interview turn 409s until confirmed; adult confirm purges the session', async () => {
+  await t('age gate: 409 until confirmed; a mistyped 18+ on a teen link is RECOVERABLE', async () => {
     const token = await tokenOf(await post('/api/register', REG));
     const cookie = cookieFrom(await post('/api/session/start', { i: token }));
     const turn = await post('/api/interview/turn', {}, cookie);
     assert.strictEqual(turn.status, 409, 'no interview turn before age is confirmed');
-    const adult = await (await post('/api/session/confirm-age', { age: 20 }, cookie)).json();
-    assert.strictEqual(adult.ok, false, 'adult routed out');
-    assert.strictEqual((await get('/api/session', cookie)).status, 401, 'adult session purged');
+    const skillsTurn = await post('/api/skills/turn', {}, cookie);
+    assert.strictEqual(skillsTurn.status, 409, 'no skills turn before age is confirmed (side door closed)');
+    // The Ayan bug: a 16-year-old fat-fingers "18". The session must survive.
+    const adult = await (await post('/api/session/confirm-age', { age: 18 }, cookie)).json();
+    assert.strictEqual(adult.ok, false, '18+ on a teen link does not proceed');
+    assert.strictEqual(adult.reason, 'adult', 'reason: adult');
+    assert.strictEqual(adult.recoverable, true, 'marked recoverable');
+    assert.strictEqual((await get('/api/session', cookie)).status, 200, 'session NOT purged (typo-fixable)');
+    const fixed = await (await post('/api/session/confirm-age', { age: 16 }, cookie)).json();
+    assert.strictEqual(fixed.ok, true, 'corrected age proceeds');
+    assert.strictEqual(fixed.teen_age, 16, 'corrected age stored');
   });
 
   await t('under-13 confirm purges the session (COPPA)', async () => {

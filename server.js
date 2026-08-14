@@ -637,13 +637,6 @@ app.get('/paid', async (req, res) => {
 // Creates an opaque server-side session and returns the teen's link (a one-time
 // ?i= invite token). The session id is unguessable random and never in the link.
 app.post('/api/register', async (req, res) => {
-  // PR E: when payment is enforced, require a valid paid-pass (from /paid). Beta = open.
-  // One purchase = one teen: the pass carries the Stripe session id, consumed atomically here.
-  if (process.env.PAYMENT_REQUIRED === 'true') {
-    const pass = verifyPaidPass(paidCookieFrom(req));
-    if (!pass.ok || !pass.sessionId) return res.status(402).json({ error: 'payment required' });
-    if (!(await db.claimPaymentSession(pass.sessionId))) return res.status(402).json({ error: 'this purchase was already used to set up a teen' });
-  }
   const { teen_first_name, teen_age, parent_first_name, parent_email, program_key, consent } = req.body || {};
   const tName = String(teen_first_name || '').trim();
   const pName = String(parent_first_name || '').trim();
@@ -661,8 +654,20 @@ app.post('/api/register', async (req, res) => {
   if (consent !== true) return res.status(400).json({ error: 'consent required' });
   if (program_key && !program) return res.status(400).json({ error: 'unknown program_key' });
 
+  // PR E: when payment is enforced, require a valid paid-pass (from /paid). Beta =
+  // open. One purchase = one teen: the pass carries the Stripe session id, consumed
+  // atomically here, AFTER field validation (a typo must not burn the purchase) and
+  // RELEASED below if session creation fails (our error must not burn it either).
+  let paidSessionId = null;
+  if (process.env.PAYMENT_REQUIRED === 'true') {
+    const pass = verifyPaidPass(paidCookieFrom(req));
+    if (!pass.ok || !pass.sessionId) return res.status(402).json({ error: 'payment required' });
+    if (!(await db.claimPaymentSession(pass.sessionId))) return res.status(402).json({ error: 'this purchase was already used to set up a teen' });
+    paidSessionId = pass.sessionId;
+  }
+
   const id = crypto.randomBytes(24).toString('base64url');
-  const inviteToken = crypto.randomBytes(24).toString('base64url'); // one-time LINK secret; the session id is NEVER in the link
+  const inviteToken = crypto.randomBytes(24).toString('base64url'); // LINK secret; the session id is NEVER in the link
   const expires_at = Date.now() + SESSION_TTL_SECONDS * 1000;
   try {
     await db.createSession({
@@ -678,6 +683,7 @@ app.post('/api/register', async (req, res) => {
     });
   } catch (e) {
     console.error('register/createSession error:', e.message);
+    if (paidSessionId) await db.releasePaymentSession(paidSessionId).catch(() => {}); // do not eat the purchase on our failure
     return res.status(500).json({ error: 'Could not create the session. Try again.' });
   }
   ga4Event('sess.' + id, 'map_registered', { teen_age: age });
@@ -714,10 +720,18 @@ app.post('/api/session/start', async (req, res) => {
 });
 
 // ─── CONFIRM AGE (deterministic; gate BEFORE the interview) ─────────────────
-// The interview can't start until the person confirms/corrects their age. Under-13
-// (COPPA) is always purged. The rest is lane-enforced against the registered mode:
-// a teen link (13–17) rejects a self-attested 18+, and an adult link (18+) rejects
-// a self-attested under-18. Age gating is deterministic here, never left to the model.
+// The interview can't start until the person confirms/corrects their age. This
+// gate is deterministic (never left to the model), but it is NOT a trapdoor: a
+// wrong answer must be correctable, because a mistyped digit is far more likely
+// than fraud (a 16-year-old fat-fingering "18" once cost the whole session).
+// Only two answers still purge, and both are legally load-bearing:
+//   - a confirmed under-13 (COPPA: we do not keep their data), and
+//   - a confirmed minor on an ADULT self-signup link (that lane has no parental
+//     consent, so we cannot hold a minor's data there).
+// A teen link seeing an 18+ answer does NOT purge: the session stays alive so
+// the teen can fix a typo, or leave for the adult signup. (This never weakened
+// anything: the gate was honesty-based, not authentication.) The client also
+// double-checks any terminal answer before submitting it.
 app.post('/api/session/confirm-age', async (req, res) => {
   const s = await currentSession(req);
   if (!s) return res.status(401).json({ error: 'no active session' });
@@ -726,7 +740,7 @@ app.post('/api/session/confirm-age', async (req, res) => {
   if (age < 13) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'under_13' }); }
   const adultLink = isAdultSession(s);
   if (adultLink && age < 18) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'need_adult' }); }
-  if (!adultLink && age > 17) { await db.deleteSession(s.id); clearSessionCookie(res); return res.json({ ok: false, reason: 'adult' }); }
+  if (!adultLink && age > 17) return res.json({ ok: false, reason: 'adult', recoverable: true }); // session kept: typo-fixable
   await db.updateSession(s.id, { teen_age: age, teen_age_confirmed_at: new Date() });
   res.json({ ok: true, teen_age: age, is_adult: age >= 18 });
 });
@@ -802,6 +816,10 @@ app.post('/api/skills/turn', async (req, res) => {
   const session = await currentSession(req);
   if (!session) return res.status(401).json({ error: 'no active session' });
   if (session.safety_blocked) return res.status(403).json({ error: 'session closed' });
+  // Same deterministic age gate as the interview lane: no model contact before a
+  // confirmed 13-17 (teen link) / 18+ (adult link) age. Closes the side door
+  // where a never-confirmed session could drive skills turns by direct API.
+  if (!session.teen_age_confirmed_at) return res.status(409).json({ error: 'age not confirmed' });
   if (!process.env.ANTHROPIC_API_KEY || !SERVER_PROMPTS.C) return res.status(500).json({ error: 'not configured' });
 
   const answer = (req.body && typeof req.body.answer === 'string') ? req.body.answer.trim().slice(0, 4000) : '';
@@ -1389,7 +1407,7 @@ app.post('/api/parent-report', async (req, res) => {
     const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out), timeout: 15000 });
     if (!r.ok) {
       console.error('Parent-report webhook non-OK:', r.status);
-      await db.updateSession(s.id, { report_sent: false }); // allow a retry
+      await db.releaseReportSend(s.id); // reopen sharing so the teen can actually retry
       return res.status(502).json({ error: 'webhook rejected', status: r.status });
     }
     ga4Event('sess.' + s.id, 'map_report_sent', {});
@@ -1397,7 +1415,7 @@ app.post('/api/parent-report', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Parent-report webhook error:', err.message);
-    await db.updateSession(s.id, { report_sent: false });
+    await db.releaseReportSend(s.id); // reopen sharing so a retry can work
     res.status(502).json({ error: err.message });
   }
 });
@@ -1437,14 +1455,14 @@ app.post('/api/self-report', async (req, res) => {
     const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out), timeout: 15000 });
     if (!r.ok) {
       console.error('Self-report webhook non-OK:', r.status);
-      await db.updateSession(s.id, { report_sent: false });
+      await db.releaseReportSend(s.id); // reopen sharing so a retry can work
       return res.status(502).json({ error: 'webhook rejected', status: r.status });
     }
     ga4Event('sess.' + s.id, 'map_self_copy_sent', {});
     res.json({ success: true });
   } catch (err) {
     console.error('Self-report webhook error:', err.message);
-    await db.updateSession(s.id, { report_sent: false });
+    await db.releaseReportSend(s.id); // reopen sharing so a retry can work
     res.status(502).json({ error: err.message });
   }
 });

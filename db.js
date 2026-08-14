@@ -245,6 +245,25 @@ async function claimCoachReportSend(id, fingerprint) {
 
 // A transport failure must not permanently consume a version. Only release the
 // exact fingerprint that failed so an older request cannot erase a newer send.
+// Undo a claimReportSend after a FAILED delivery so the teen can retry. The old
+// failure path reset only report_sent, leaving sharing_status='sent'; the retry
+// then hit the sharing guard and got a mirror success, so one webhook hiccup
+// silently killed the parent report forever. Only reverses a 'sent' that isn't
+// safety-blocked; a decline stays declined.
+async function releaseReportSend(id) {
+  if (!id) return;
+  if (pool) {
+    await pool.query(
+      `UPDATE sessions SET report_sent = false, sharing_status = 'pending'
+       WHERE id = $1 AND sharing_status = 'sent' AND safety_blocked = false`, [id]);
+    return;
+  }
+  const row = mem.get(id);
+  if (row && row.sharing_status === 'sent' && !row.safety_blocked) {
+    row.report_sent = false; row.sharing_status = 'pending';
+  }
+}
+
 async function releaseCoachReportSend(id, fingerprint) {
   if (!id || !fingerprint) return;
   if (pool) {
@@ -304,10 +323,18 @@ async function claimPaymentSession(sessionId) {
   memPayments.add(sessionId); return true;
 }
 
+// Undo a claimPaymentSession when the setup it was consumed for FAILED, so a
+// paid parent isn't told "this purchase was already used" because of our error.
+async function releasePaymentSession(sessionId) {
+  if (!sessionId) return;
+  if (pool) { await pool.query('DELETE FROM payments WHERE stripe_session_id = $1', [sessionId]); return; }
+  memPayments.delete(sessionId);
+}
+
 function backend() { return pool ? 'postgres' : 'memory'; }
 
 module.exports = {
   init, ready, createSession, getSession, claimInvite, updateSession,
-  claimReportSend, claimRefine, claimCoachReportSend, releaseCoachReportSend,
-  deleteSession, deleteExpired, claimPaymentSession, backend
+  claimReportSend, releaseReportSend, claimRefine, claimCoachReportSend, releaseCoachReportSend,
+  deleteSession, deleteExpired, claimPaymentSession, releasePaymentSession, backend
 };
