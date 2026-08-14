@@ -1,5 +1,5 @@
 // ============================================================================
-// OTS Teen Agent — interview engine (chat.js port, step 2)
+// OTS Teen Agent, interview engine (chat.js port, step 2)
 // ============================================================================
 // Runs Prompt A turn-by-turn, catches the four sentinels, and on
 // [INTERVIEW_COMPLETE] hands the transcript to Prompt B for scoring.
@@ -32,17 +32,17 @@ const SEED_MARKER = '__SEED_BEGIN__';           // hidden first user turn that t
 // ─── STATE ───────────────────────────────────────────────────────────────
 const conversationHistory = []; // interview turns [{ role, content }]
 const skillsHistory = [];       // optional scenario-check turns [{ role, content }]
-window.mode = 'interview';      // 'interview' | 'skills' — which loop is running
+window.mode = 'interview';      // 'interview' | 'skills', which loop is running
 window.session = null;          // teen-safe fields from /api/session(/start); auth is the cookie
 window.safetyEvent = null;      // null | 'CRISIS' | 'ABUSE' | 'EXPLOITATION' | 'THREAT' | 'SUPPORT'
 window.halted = false;          // hard stop (CRISIS/THREAT): no more turns, no scoring
 window.blockParentReport = false; // any serious flag (see SERIOUS_SAFETY): this session never produces a parent report
-window.isAdult = false;         // 18+ self-signup: no parent, no parent report — the result is their own
+window.isAdult = false;         // 18+ self-signup: no parent, no parent report, the result is their own
 window.interviewComplete = false;
 window.skillsComplete = false;
 window.scoringResult = null;
 window.moneyJudgment = null;    // money_judgment from Prompt D, once the skills check runs
-window.decisionLabStatus = null; // 'pending' | 'completed' | 'skipped' — persisted server-side
+window.decisionLabStatus = null; // 'pending' | 'completed' | 'skipped', persisted server-side
 window.supportRequest = '';     // the teen's Family Handshake support line
 
 function activeHistory() { return window.mode === 'skills' ? skillsHistory : conversationHistory; }
@@ -59,7 +59,7 @@ async function boot() {
   try {
     if (linkId) {
       // First open: atomically CLAIM the one-time invite and get an HttpOnly cookie
-      // (the session id — which the new link never contained).
+      // (the session id, which the new link never contained).
       const r = await fetch('/api/session/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(inviteToken ? { i: inviteToken } : { s: legacyId })
@@ -73,7 +73,7 @@ async function boot() {
       session = j;
       // Strip the token from the URL so it isn't left in the address bar / history.
       history.replaceState(null, '', location.pathname);
-      // Fresh start — drop any stale transcript left in this tab by another session.
+      // Fresh start, drop any stale transcript left in this tab by another session.
       clearSession();
     } else {
       // Reload (no link in the URL): re-establish from the cookie.
@@ -88,7 +88,7 @@ async function boot() {
   window.isAdult = !!session.is_adult;
 
   if (session.safety_blocked) {
-    return showError("This check is closed. If you’re carrying something heavy, you can call or text <b>988</b> any time — it’s free and people who can help answer.");
+    return showError("This check is closed. If you’re carrying something heavy, you can call or text <b>988</b> any time, it’s free and people who can help answer.");
   }
   // Recovery: a finished session re-renders its SAVED result so a teen who didn't
   // save or share isn't stuck on a dead-end "already complete" message.
@@ -137,7 +137,7 @@ async function recoverResult(session) {
     }
   } catch (e) { /* fall through */ }
   showError(session.report_sent
-    ? "This check is already done — your result was shared the way you chose. Nice work."
+    ? "This check is already done, your result was shared the way you chose. Nice work."
     : "This check is already complete.");
 }
 
@@ -145,21 +145,21 @@ async function recoverResult(session) {
 function showOnboarding() {
   const share = document.getElementById('onboardShare');
   if (window.isAdult) {
-    if (share) share.textContent = 'This Map is private to you. Nothing is shared with anyone — at the end you can choose to email yourself a copy.';
+    if (share) share.textContent = 'This Map is private to you. Nothing is shared with anyone, at the end you can choose to email yourself a copy.';
     const safety = document.getElementById('onboardSafety');
-    if (safety) safety.textContent = 'This is private to you. One exception: if something you say makes us think you might be in immediate danger, being hurt, or seriously unsafe, the app may pause and show places that can help. In some cases a trained OTS responder may be alerted so someone can check in — they don’t see your full conversation.';
+    if (safety) safety.textContent = 'This is private to you. One exception: if something you say makes us think you might be in immediate danger, being hurt, or seriously unsafe, the app may pause and show places that can help. In some cases a trained OTS responder may be alerted so someone can check in, they don’t see your full conversation.';
   } else if (share && window.session && window.session.parent_first_name) {
     share.textContent = window.session.program_key
       ? 'Jay, your program coach, receives your final scored System Map so he can prepare for coaching. He does not receive your raw answers or transcript. If anything goes to ' + window.session.parent_first_name + ', you preview every line and approve it first.'
       : 'If anything goes to ' + window.session.parent_first_name +
-        ', you preview every line and approve it first. Keep anything private — they’re never told what you left out.';
+        ', you preview every line and approve it first. Keep anything private, they’re never told what you left out.';
   }
   const btn = document.getElementById('onboardStart');
   if (btn) btn.onclick = showAgeCheck;
   showScreen('onboarding');
 }
 
-// Deterministic age confirmation — the interview can't start until this passes
+// Deterministic age confirmation, the interview can't start until this passes
 // (server-enforced: /api/interview/turn 409s until teen_age_confirmed_at is set).
 // Under-13 (COPPA) and 18+ are routed out server-side and the session is purged.
 function showAgeCheck() {
@@ -199,15 +199,15 @@ async function confirmAge(age) {
     if (block) {
       block.style.display = 'block';
       block.textContent = (j && j.reason === 'under_13')
-        ? 'Thanks for being honest. This one’s built for ages 13 and up, so we’ll stop here — nothing was saved.'
+        ? 'Thanks for being honest. This one’s built for ages 13 and up, so we’ll stop here, nothing was saved.'
         : (j && j.reason === 'need_adult')
-          ? 'This link was set up as the adult (18+) Map, but the age you entered is under 18. Nothing was saved — ask for a teen link instead.'
+          ? 'This link was set up as the adult (18+) Map, but the age you entered is under 18. Nothing was saved, ask for a teen link instead.'
           : 'Thanks! This link was set up as the teen (13–17) Map. Since you’re 18 or older, head back and choose “18 or older” to set up your own Map. Nothing was saved.';
     }
     window.halted = true;
   } catch (e) {
     const block = document.getElementById('ageBlock');
-    if (block) { block.style.display = 'block'; block.textContent = 'Couldn’t confirm just now — check your connection and try again.'; }
+    if (block) { block.style.display = 'block'; block.textContent = 'Couldn’t confirm just now, check your connection and try again.'; }
   }
 }
 
@@ -424,7 +424,7 @@ function handleSafety(flag) {
   // transcript from the device NOW so the disclosure can't be reopened on a
   // shared/parent device. saveSession() also refuses to write once safetyEvent
   // is one of these. The server independently sets a durable safety_blocked and
-  // purges its copy — the client stop is UX, the server block is authoritative.
+  // purges its copy, the client stop is UX, the server block is authoritative.
   const serious = SERIOUS_SAFETY.indexOf(flag) !== -1;
   if (serious) clearSession();
   showResources(flag);
@@ -434,7 +434,7 @@ function handleSafety(flag) {
     window.halted = true;
     window.blockParentReport = true;
     let msg;
-    if (flag === 'CRISIS') msg = 'Paused. The most important thing right now is talking to someone who can help — the options above are there for you.';
+    if (flag === 'CRISIS') msg = 'Paused. The most important thing right now is talking to someone who can help, the options above are there for you.';
     else if (flag === 'THREAT') msg = 'Let’s pause here. If someone could get hurt, the numbers above can help right now.';
     else msg = 'This is a good place to pause. The people and numbers above can actually help with what you’re carrying.';
     disableInputPermanently(msg);
@@ -468,10 +468,10 @@ function handleComplete() {
 }
 
 async function runScoring() {
-  const status = addStatus('Putting your result together — about 30 seconds. Your answers are saved, so you won’t lose anything.');
+  const status = addStatus('Putting your result together, about 30 seconds. Your answers are saved, so you won’t lose anything.');
   try {
     // Scoring runs SERVER-side (Prompt B) from the server's OWN stored transcript
-    // — we send no transcript. The server validates, retries, handles its safety
+    //, we send no transcript. The server validates, retries, handles its safety
     // pass, and STORES the authentic report draft. The result never contains the
     // parent's email.
     const r = await fetch('/api/score', {
@@ -484,7 +484,7 @@ async function runScoring() {
     if (data && data.safety) {
       window.blockParentReport = true;
       handleSafety(String(data.safety));
-      addStatus('Thanks for being honest with me. There’s no scored result here — what you shared matters more than that.');
+      addStatus('Thanks for being honest with me. There’s no scored result here, what you shared matters more than that.');
       return;
     }
     if (!r.ok || !data.result) throw new Error((data && data.error) || 'Could not get a valid result');
@@ -492,15 +492,15 @@ async function runScoring() {
     window.scoringResult = data.result;
     // Guided completion (Avi/ChatGPT feedback): instead of dropping the teen on a
     // passive result, offer the Decision Lab as the clear recommended next step
-    // FIRST — so the 5 scenarios aren't a buried afterthought.
+    // FIRST, so the 5 scenarios aren't a buried afterthought.
     if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) showDecisionLabPrompt();
     else renderResult(data.result);
   } catch (e) {
     status.remove();
     console.error('Scoring error:', e);
-    // The transcript is still in memory this page session — offer a real retry
+    // The transcript is still in memory this page session, offer a real retry
     // rather than telling them to refresh (a refresh would NOT resume it).
-    addStatus('Your result hit a snag while generating — your answers are still right here.');
+    addStatus('Your result hit a snag while generating, your answers are still right here.');
     const retry = elem('button', 'btn btn-primary', 'Try generating my result again');
     retry.style.marginTop = '10px';
     retry.addEventListener('click', () => { retry.remove(); runScoring(); });
@@ -509,7 +509,7 @@ async function runScoring() {
   }
 }
 
-// Client-side schema check on the scoring object — scores are 1–5 integers or
+// Client-side schema check on the scoring object, scores are 1–5 integers or
 // null, confidence is from the allowed enum, the result shape is present.
 const CONFIDENCE_ENUM = ['high', 'moderate', 'limited', 'insufficient'];
 function validScore(s) { return s === null || (Number.isInteger(s) && s >= 1 && s <= 5); }
@@ -549,7 +549,7 @@ function showDecisionLabPrompt() {
   const box = elem('div', 'dl-prompt');
   box.appendChild(elem('div', 'dl-pill', 'Last part'));
   box.appendChild(elem('h1', 'result-h1', name + ', last part before your result'));
-  box.appendChild(elem('p', 'dl-text', 'One more short round: five quick real-life money calls, about 3 minutes. It’s part of your map — it sharpens the read and it’s the part most people find most interesting. Then you get your full result.'));
+  box.appendChild(elem('p', 'dl-text', 'One more short round: five quick real-life money calls, about 3 minutes. It’s part of your map, it sharpens the read and it’s the part most people find most interesting. Then you get your full result.'));
   const add = elem('button', 'btn btn-primary dl-add', 'Keep going → 5 quick scenarios');
   add.addEventListener('click', startSkills);
   const skip = elem('button', 'btn btn-ghost dl-skip', 'I’d rather stop here and see my result');
@@ -567,8 +567,8 @@ function showDecisionLabPrompt() {
 // Renders teen_output: stage badge, the goal mirror, the five-bar chart (null
 // dimensions render as "not enough info yet"), strength + verbatim quote, the
 // biggest unlock, the seven-day move, an optional high-scorer pathway, and the
-// two-way choice. Every model-authored string goes in via textContent — never
-// innerHTML — so nothing the model wrote can render as markup.
+// two-way choice. Every model-authored string goes in via textContent, never
+// innerHTML, so nothing the model wrote can render as markup.
 function renderResult(parsed) {
   showScreen('result');
   const t = parsed.teen_output || {};
@@ -577,7 +577,7 @@ function renderResult(parsed) {
   root.innerHTML = '';
   const name = window.session.teen_first_name;
 
-  // 1) Your System Map — the branded heart of the result: North Star → what's
+  // 1) Your System Map, the branded heart of the result: North Star → what's
   //    already working → the system you're running → friction → lever → 7-day
   //    move. The teen feels UNDERSTOOD before being EVALUATED (stage/bars below).
   root.appendChild(elem('h1', 'result-h1', name + ', here’s where you are'));
@@ -586,30 +586,30 @@ function renderResult(parsed) {
     banner.appendChild(elem('span', 'rb-check', '✓'));
     const bannerText = window.isAdult
       ? (window.alreadyShared
-        ? 'This is your Map — we emailed you a copy. You can also re-save it as a PDF below.'
-        : 'Your Map is ready — it’s just for you. Save it or email yourself a copy at the bottom.')
+        ? 'This is your Map, we emailed you a copy. You can also re-save it as a PDF below.'
+        : 'Your Map is ready, it’s just for you. Save it or email yourself a copy at the bottom.')
       : (window.alreadyShared
-        ? 'You already shared this with ' + window.session.parent_first_name + ' — this is your saved result, and you can re-save it as a PDF below.'
+        ? 'You already shared this with ' + window.session.parent_first_name + ', this is your saved result, and you can re-save it as a PDF below.'
         : (window.session.program_key
           ? 'Your result is ready. Jay receives this scored Map for coaching, without your raw answers. Nothing has been sent to your parent yet.'
-          : 'Your result is ready — nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
+          : 'Your result is ready, nothing’s been sent yet. Your choices (save, sharpen, share) are at the bottom.'));
     banner.appendChild(elem('span', 'rb-text', bannerText));
     root.appendChild(banner);
   }
   root.appendChild(buildSystemMap(t));
 
-  // 5) The evidence behind it — stage, confidence, the dimension map. Placed
+  // 5) The evidence behind it, stage, confidence, the dimension map. Placed
   //    AFTER the narrative so it reads as support, not a report card. Bars show
   //    qualitative labels (Starting…Systemized), not bare 1–5 grades.
   const evid = elem('div', 'evidence-block');
   evid.appendChild(elem('h3', 'section-title', 'Why I’m saying that'));
   if (t.stage_display) {
     evid.appendChild(elem('span', 'stage-badge', t.stage_display));
-    if (level.partial_note) evid.appendChild(elem('div', 'partial-note', 'Based on partial evidence — some questions got skipped, which is fine.'));
+    if (level.partial_note) evid.appendChild(elem('div', 'partial-note', 'Based on partial evidence, some questions got skipped, which is fine.'));
   }
   if (t.confidence_note) { const c = elem('p', 'confidence-note'); appendTextWithLineBreaks(c, t.confidence_note); evid.appendChild(c); }
   if (Array.isArray(t.bars) && t.bars.length) {
-    evid.appendChild(elem('p', 'bars-legend', 'These aren’t grades — they’re where each money skill is starting from right now.'));
+    evid.appendChild(elem('p', 'bars-legend', 'These aren’t grades, they’re where each money skill is starting from right now.'));
     evid.appendChild(buildBars(t.bars));
   }
   root.appendChild(evid);
@@ -617,7 +617,7 @@ function renderResult(parsed) {
 
   // 6) Money decisions (from the optional scenario check), if completed.
   if (window.moneyJudgment) root.appendChild(buildMoneyJudgmentSection(window.moneyJudgment));
-  else if (window.decisionLabStatus === 'skipped' && !window.alreadyShared) root.appendChild(elem('p', 'confidence-note', 'Money decision skills were skipped — not included in this map. You can still add them below.'));
+  else if (window.decisionLabStatus === 'skipped' && !window.alreadyShared) root.appendChild(elem('p', 'confidence-note', 'Money decision skills were skipped, not included in this map. You can still add them below.'));
 
   // 7) High-scorer pathway.
   if (t.high_scorer_pathway) {
@@ -626,7 +626,7 @@ function renderResult(parsed) {
     root.appendChild(sec);
   }
 
-  // 8) Two ways forward — both are real, clickable controls.
+  // 8) Two ways forward, both are real, clickable controls.
   if (t.choice && (t.choice.solo || t.choice.ots)) {
     root.appendChild(elem('h3', 'choice-title', 'Two ways to go from here'));
     const wrap = elem('div', 'choice');
@@ -645,12 +645,12 @@ function renderResult(parsed) {
     root.appendChild(panel);
   }
 
-  // 9) Accuracy check — "Does this feel true?" before anything is shared. Skipped
+  // 9) Accuracy check, "Does this feel true?" before anything is shared. Skipped
   //    once the report has been sent (the read is settled).
   if (!window.alreadyShared) root.appendChild(buildAccuracyCheck());
 
   // 10) Guided "What's next": the optional scenarios, save-as-PDF, and the share
-  //     step (the PRIMARY action) — each clearly labeled so nothing gets missed.
+  //     step (the PRIMARY action), each clearly labeled so nothing gets missed.
   root.appendChild(buildNextSteps());
 
   scrollResultTop();
@@ -680,7 +680,7 @@ function notifyCoachResult() {
 }
 
 // A clear, guided end-of-result block. Avi's run-through showed teens miss the
-// share button, skip the PDF, and won't find the scenarios — so they're now
+// share button, skip the PDF, and won't find the scenarios, so they're now
 // explicit, labeled steps, with the share as the obvious primary action.
 function buildNextSteps() {
   if (window.isAdult) return buildAdultNextSteps();
@@ -693,7 +693,7 @@ function buildNextSteps() {
     box.appendChild(elem('div', 'ns-status', '✓ You already shared your approved lines with ' + parent + '. Jay also has the scored Map for coaching.'));
     const pdfStep = elem('div', 'ns-step');
     pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
+    pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this, it won’t be here later.'));
     const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
     pdfBtn.addEventListener('click', downloadResultPDF);
     pdfStep.appendChild(pdfBtn);
@@ -707,7 +707,7 @@ function buildNextSteps() {
   if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
     const step = elem('div', 'ns-step');
     step.appendChild(elem('div', 'ns-step-h', 'Put it to the test  ·  optional, ~3 min'));
-    step.appendChild(elem('div', 'ns-step-p', 'Five quick real-life money calls. They add a “money decision skills” read to your result — most people find this the most interesting part.'));
+    step.appendChild(elem('div', 'ns-step-p', 'Five quick real-life money calls. They add a “money decision skills” read to your result, most people find this the most interesting part.'));
     const b = elem('button', 'btn btn-primary ns-btn', 'Try the 5 scenarios →');
     b.addEventListener('click', startSkills);
     step.appendChild(b);
@@ -716,7 +716,7 @@ function buildNextSteps() {
 
   const pdfStep = elem('div', 'ns-step');
   pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
+  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this, it won’t be here later.'));
   const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
   pdfBtn.addEventListener('click', downloadResultPDF);
   pdfStep.appendChild(pdfBtn);
@@ -731,11 +731,11 @@ function buildNextSteps() {
   } else {
     const shareStep = elem('div', 'ns-step ns-primary');
     shareStep.appendChild(elem('div', 'ns-step-h', 'Share with ' + parent + '  ·  your call'));
-    shareStep.appendChild(elem('div', 'ns-step-p', 'This is the only thing ' + parent + ' sees — and you choose every single line before it sends. You can also send nothing.'));
+    shareStep.appendChild(elem('div', 'ns-step-p', 'This is the only thing ' + parent + ' sees, and you choose every single line before it sends. You can also send nothing.'));
     const cta = elem('button', 'btn btn-primary result-cta ns-btn-lg', 'Choose what ' + parent + ' sees →');
     cta.addEventListener('click', showPreview);
     shareStep.appendChild(cta);
-    const priv = elem('button', 'btn btn-ghost ns-private', 'Keep this private — send nothing');
+    const priv = elem('button', 'btn btn-ghost ns-private', 'Keep this private, send nothing');
     priv.addEventListener('click', keepPrivate);
     shareStep.appendChild(priv);
     box.appendChild(shareStep);
@@ -750,7 +750,7 @@ function buildAdultNextSteps() {
   box.appendChild(elem('div', 'ns-title', window.alreadyShared ? 'Your Map' : 'Before you go'));
   if (window.alreadyShared) box.appendChild(elem('div', 'ns-status', '✓ We emailed a copy to you.'));
 
-  // Optional scenarios (same as the teen flow) — only if not already done.
+  // Optional scenarios (same as the teen flow), only if not already done.
   if (!window.blockParentReport && !window.moneyJudgment && !window.skillsComplete) {
     const step = elem('div', 'ns-step');
     step.appendChild(elem('div', 'ns-step-h', 'Put it to the test  ·  optional, ~3 min'));
@@ -764,7 +764,7 @@ function buildAdultNextSteps() {
   // Keep your result.
   const pdfStep = elem('div', 'ns-step');
   pdfStep.appendChild(elem('div', 'ns-step-h', 'Keep your result'));
-  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this — it won’t be here later.'));
+  pdfStep.appendChild(elem('div', 'ns-step-p', 'Save it before you close this, it won’t be here later.'));
   const pdfBtn = elem('button', 'btn btn-ghost result-pdf ns-btn', '⤓  Save as PDF');
   pdfBtn.addEventListener('click', downloadResultPDF);
   pdfStep.appendChild(pdfBtn);
@@ -778,7 +778,7 @@ function buildAdultNextSteps() {
   if (!window.blockParentReport && !window.alreadyShared) {
     const step = elem('div', 'ns-step ns-primary');
     step.appendChild(elem('div', 'ns-step-h', 'Email me a copy  ·  your call'));
-    step.appendChild(elem('div', 'ns-step-p', 'Send your full Map to your inbox. It’s just for you — nothing goes to anyone else.'));
+    step.appendChild(elem('div', 'ns-step-p', 'Send your full Map to your inbox. It’s just for you, nothing goes to anyone else.'));
     const b = elem('button', 'btn btn-primary result-cta ns-btn-lg', 'Email me my Map →');
     b.addEventListener('click', () => sendSelfReport(b));
     step.appendChild(b);
@@ -798,14 +798,14 @@ async function sendSelfReport(btn) {
     const j = await r.json();
     if (j && j.success) {
       window.alreadyShared = true;
-      if (btn) { btn.textContent = 'Sent ✓ — check your inbox'; }
+      if (btn) { btn.textContent = 'Sent ✓, check your inbox'; }
     } else { throw new Error((j && j.error) || 'send failed'); }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
   }
 }
 
-// Explicit "keep private" — a durable end state, so a teen who doesn't want to
+// Explicit "keep private", a durable end state, so a teen who doesn't want to
 // share isn't left in limbo. Ends the session (clears the cookie) and confirms.
 async function keepPrivate() {
   const parent = window.session.parent_first_name;
@@ -862,7 +862,7 @@ function buildSystemMap(t) {
 // ─── "DOES THIS FEEL TRUE?" accuracy check ───────────────────────────────
 // The teen confirms or corrects the read before sharing. "Not really" opens a
 // one-line correction that re-reads the result (server re-scores with it in mind)
-// — so a parent report is never built from a read the teen says is plainly wrong.
+//, so a parent report is never built from a read the teen says is plainly wrong.
 function buildAccuracyCheck() {
   const wrap = elem('div', 'accuracy-check'); wrap.id = 'accuracyCheck';
   wrap.appendChild(elem('div', 'ac-q', 'Does this feel true?'));
@@ -882,7 +882,7 @@ function handleAccuracy(answer, wrap) {
   const old = wrap.querySelector('.ac-followup'); if (old) old.remove();
   const fu = elem('div', 'ac-followup');
   if (answer === 'Not really') {
-    fu.appendChild(elem('div', 'ac-fu-label', 'What did I miss? A line or two — I’ll re-read with that in mind.'));
+    fu.appendChild(elem('div', 'ac-fu-label', 'What did I miss? A line or two, I’ll re-read with that in mind.'));
     const ta = document.createElement('textarea');
     ta.className = 'ac-input'; ta.id = 'acInput'; ta.rows = 2;
     ta.placeholder = 'e.g. “the goal is actually X, not Y,” or “I’m way more cautious than this says”';
@@ -891,7 +891,7 @@ function handleAccuracy(answer, wrap) {
     rb.addEventListener('click', () => refineResult(ta.value));
     fu.appendChild(rb);
   } else {
-    fu.appendChild(elem('div', 'ac-fu-ok', answer === 'Yes' ? 'Love it — that’s yours.' : 'Good — close enough to be useful.'));
+    fu.appendChild(elem('div', 'ac-fu-ok', answer === 'Yes' ? 'Love it, that’s yours.' : 'Good, close enough to be useful.'));
   }
   wrap.appendChild(fu);
 }
@@ -914,7 +914,7 @@ async function refineResult(correction) {
   } catch (e) {
     if (rb) { rb.disabled = false; rb.textContent = 'Refine my result →'; }
     const wrap = document.getElementById('accuracyCheck');
-    if (wrap) wrap.appendChild(elem('div', 'ac-err', 'Couldn’t refine just now — your result is unchanged. Try again in a moment.'));
+    if (wrap) wrap.appendChild(elem('div', 'ac-err', 'Couldn’t refine just now, your result is unchanged. Try again in a moment.'));
     console.error('refine error:', e);
   }
 }
@@ -933,7 +933,7 @@ function startSkills() {
   const bar = document.getElementById('inputBar');
   if (bar) bar.style.display = '';
   const h = document.getElementById('chatHeading');
-  if (h) h.textContent = window.session.teen_first_name + ' — quick scenarios';
+  if (h) h.textContent = window.session.teen_first_name + ', quick scenarios';
   showScreen('chat');
   // Server seeds the first scenario on the answer-less turn.
   requestTurn();
@@ -949,7 +949,7 @@ function handleSkillsComplete() {
 }
 
 async function scoreSkills() {
-  const status = addStatus('Folding your scenarios into your result — a few seconds.');
+  const status = addStatus('Folding your scenarios into your result, a few seconds.');
   try {
     // Skills scoring (Prompt D) runs server-side from the stored skills transcript
     // and adds the money-judgment line to the STORED report draft.
@@ -994,7 +994,7 @@ function mergeMoneyJudgmentIntoReport() {
 
 function buildMoneyJudgmentSection(mj) {
   const wrap = elem('div', 'mj-section');
-  wrap.appendChild(elem('div', 'mj-title', 'Money decision skills — from your scenarios'));
+  wrap.appendChild(elem('div', 'mj-title', 'Money decision skills, from your scenarios'));
   if (mj.score != null) {
     const row = elem('div', 'bar-row');
     row.appendChild(elem('div', 'bar-label', 'Decisions'));
@@ -1013,7 +1013,7 @@ function buildMoneyJudgmentSection(mj) {
     appendTextWithLineBreaks(p, mj.teen_summary);
     wrap.appendChild(p);
   }
-  // Per-scenario insight cards — the personalized, educational read (previously
+  // Per-scenario insight cards, the personalized, educational read (previously
   // discarded). One compact card per scenario: lesson, what you showed, quote.
   if (Array.isArray(mj.per_scenario) && mj.per_scenario.length) {
     const grid = elem('div', 'mj-scenarios');
@@ -1033,17 +1033,17 @@ function buildMoneyJudgmentSection(mj) {
 // ─── PREVIEW / VETO (step 4) ─────────────────────────────────────────────
 // The teen reviews each shareable disclosure and chooses share / keep-private
 // (with inline edit). The fixed framing, confidence summary, and program fit
-// are shown read-only — they're framing, not the teen's disclosures. On approval
+// are shown read-only, they're framing, not the teen's disclosures. On approval
 // the report is FROZEN (no Prompt B re-call) and only the approved + edited items
 // are sent. The parent is never told how many items were withheld.
 function showPreview() {
-  if (window.blockParentReport) return; // safety guard — never reachable, but defensive
+  if (window.blockParentReport) return; // safety guard, never reachable, but defensive
   postEvent('map_share_opened');
   const draft = (window.scoringResult && window.scoringResult.parent_report_draft) || {};
   const items = (draft.shareable_items || []).map(it => ({
     id: it.id, category: it.category, text: it.text, evidence_quote: it.evidence_quote || null, shared: true
   }));
-  // EVERY personalized inference is teen-controlled — including the growth
+  // EVERY personalized inference is teen-controlled, including the growth
   // horizon, confidence summary, and program fit, which used to send regardless
   // of veto. Only truly generic framing (limitation + what-not-to-do) stays fixed.
   if (draft.growth_horizon) items.push({ id: 'gh1', category: 'growth_horizon', text: draft.growth_horizon, evidence_quote: null, shared: true });
@@ -1063,7 +1063,7 @@ function showHandshakeStep(draft) {
   root.innerHTML = '';
   const parent = window.session.parent_first_name;
   root.appendChild(elem('h1', 'pv-h1', 'The Family Handshake'));
-  root.appendChild(elem('p', 'pv-intro', 'Before you choose what to share — how do you want ' + parent + ' to help with this, without taking it over? Tap what fits, add your own, or skip.'));
+  root.appendChild(elem('p', 'pv-intro', 'Before you choose what to share, how do you want ' + parent + ' to help with this, without taking it over? Tap what fits, add your own, or skip.'));
   const chipsRow = elem('div', 'hs-chips');
   const ta = document.createElement('textarea');
   ta.id = 'hsSupport'; ta.className = 'pv-support-input'; ta.rows = 3;
@@ -1099,7 +1099,7 @@ function renderPreview(draft) {
   // Read-only framing the teen can see but not veto.
   const fixed = draft.fixed_framing || {};
   const ro = elem('div', 'pv-readonly');
-  ro.appendChild(elem('div', 'pv-ro-title', 'The only part you can’t change — general ground rules, not anything about you'));
+  ro.appendChild(elem('div', 'pv-ro-title', 'The only part you can’t change, general ground rules, not anything about you'));
   if (fixed.limitation) ro.appendChild(para(fixed.limitation));
   if (Array.isArray(fixed.what_not_to_do) && fixed.what_not_to_do.length) {
     const ul = document.createElement('ul');
@@ -1108,9 +1108,9 @@ function renderPreview(draft) {
   }
   root.appendChild(ro);
 
-  // Teen-authored support request — often the most useful line for the parent.
+  // Teen-authored support request, often the most useful line for the parent.
   const sr = elem('div', 'pv-support');
-  sr.appendChild(elem('label', 'pv-support-label', 'One way you’d want ' + parent + ' to support this — without taking it over (optional)'));
+  sr.appendChild(elem('label', 'pv-support-label', 'One way you’d want ' + parent + ' to support this, without taking it over (optional)'));
   const srInput = document.createElement('textarea');
   srInput.id = 'pvSupport'; srInput.className = 'pv-support-input'; srInput.rows = 2;
   srInput.placeholder = 'e.g. “ask before stepping in,” “let me try first,” “help me set up the account”…';
@@ -1131,7 +1131,7 @@ function renderPreview(draft) {
 }
 
 function buildPreviewItem(item) {
-  // Exact quotes default OFF — sharing your literal words is an affirmative opt-in,
+  // Exact quotes default OFF, sharing your literal words is an affirmative opt-in,
   // not a default (audit). The teen can flip "My exact words" on per item.
   if (item.evidence_quote && item.includeQuote === undefined) item.includeQuote = false;
   const card = elem('div', 'pv-item');
@@ -1186,7 +1186,7 @@ function buildPreviewItem(item) {
     } else {
       const reworded = ta.value.trim() && ta.value.trim() !== item.text;
       item.text = ta.value.trim() || item.text;
-      // If they reworded it, default the exact quote OFF — their words, their call.
+      // If they reworded it, default the exact quote OFF, their words, their call.
       if (reworded && item.evidence_quote) { item.includeQuote = false; applyQuote(); }
       textEl.textContent = '';
       appendTextWithLineBreaks(textEl, item.text);
@@ -1221,10 +1221,10 @@ async function sendParentReport() {
 
   // FREEZE: approved (shared) items with their possibly-edited text. No Prompt B
   // re-call. Personalized fields (growth horizon, confidence, program fit) now
-  // travel as approved items only — nothing personalized bypasses the veto.
+  // travel as approved items only, nothing personalized bypasses the veto.
   // Send only SELECTIONS (which stored items to include, optional rewording,
   // quote on/off) + the teen's support line. The server builds the email from
-  // its own stored, server-authored draft — the client can't inject content that
+  // its own stored, server-authored draft, the client can't inject content that
   // wasn't scored. (audit P0 #9)
   const selections = window.previewItems.map(i => ({
     id: i.id, include: !!i.shared, text: i.text, includeQuote: i.includeQuote !== false
@@ -1260,7 +1260,7 @@ function renderSent(didSend) {
   root.appendChild(elem('div', 'stage-badge', didSend ? 'Sent ✓' : 'Kept private'));
   root.appendChild(elem('h1', 'result-h1', didSend ? 'Done.' : 'Nothing sent to ' + parent + '.'));
   root.appendChild(para(didSend
-    ? 'Your result went to ' + parent + ' — only what you chose. That’s how this works.'
+    ? 'Your result went to ' + parent + ', only what you chose. That’s how this works.'
     : 'Nothing went to ' + parent + '. Jay still has the scored Map for coaching, without your raw answers or transcript.'));
 }
 
@@ -1276,7 +1276,7 @@ function buildBars(bars) {
       track.className = 'bar-track empty';
       track.appendChild(elem('span', 'bar-empty', 'not enough info yet'));
       row.appendChild(track);
-      row.appendChild(elem('div', 'bar-score muted', '—'));
+      row.appendChild(elem('div', 'bar-score muted', ', '));
     } else {
       const fill = elem('div', 'bar-fill');
       fill.style.width = (clamp(b.score, 0, 5) / 5 * 100) + '%';
@@ -1289,11 +1289,11 @@ function buildBars(bars) {
   return wrap;
 }
 
-// Clickable OTS path — shows the teen's actual recommended first skills, not a
-// generic sales card (audit UI #7 — the biggest conversion gap).
+// Clickable OTS path, shows the teen's actual recommended first skills, not a
+// generic sales card (audit UI #7, the biggest conversion gap).
 // Set to a YouTube/Vimeo or hosted .mp4 URL to show Jay's short intro video on
 // the OTS pathway. Empty -> a placeholder slot. (CSP allows youtube/vimeo +
-// https media — see server.js security headers.)
+// https media, see server.js security headers.)
 const JAY_VIDEO_URL = '';
 
 function buildVideoSlot() {
@@ -1301,7 +1301,7 @@ function buildVideoSlot() {
   if (!JAY_VIDEO_URL) {
     slot.classList.add('ots-video-ph');
     slot.appendChild(elem('div', 'ots-video-icon', '▶'));
-    slot.appendChild(elem('div', 'ots-video-label', 'A short word from Jay — coming soon'));
+    slot.appendChild(elem('div', 'ots-video-label', 'A short word from Jay, coming soon'));
     return slot;
   }
   if (/youtube|youtu\.be|vimeo/.test(JAY_VIDEO_URL)) {
@@ -1327,7 +1327,7 @@ function showOtsPath() {
   const unlock = t.biggest_unlock || {};
   panel.innerHTML = '';
   panel.appendChild(elem('div', 'ots-panel-title', 'Your first 3 missions'));
-  panel.appendChild(elem('p', 'ots-panel-text', 'Three concrete moves to turn this into momentum — at your pace, with your goal at the center.'));
+  panel.appendChild(elem('p', 'ots-panel-text', 'Three concrete moves to turn this into momentum, at your pace, with your goal at the center.'));
 
   const missions = elem('div', 'ots-missions');
   let n = 0;
@@ -1342,7 +1342,7 @@ function showOtsPath() {
     missions.appendChild(m);
   };
   mission('Start this week', t.seven_day_move);
-  if (unlock.skill) mission('Build the skill', 'Get real reps on ' + unlock.skill + ' — the one thing that turns what you already have into what you want.');
+  if (unlock.skill) mission('Build the skill', 'Get real reps on ' + unlock.skill + ', the one thing that turns what you already have into what you want.');
   mission('With Outsmart the System', lessons.length
     ? 'Your first lessons: ' + lessons.join(' · ') + '.'
     : 'A guided system for turning what you just saw into real skills.');
@@ -1361,12 +1361,12 @@ function showOtsPath() {
 
 function markSoloMove(wrap) {
   if (document.getElementById('soloNote')) return;
-  const note = elem('div', 'solo-note', 'Love it — your move is up there under “This week.” Screenshot it or save the PDF so you don’t lose it.');
+  const note = elem('div', 'solo-note', 'Love it, your move is up there under “This week.” Screenshot it or save the PDF so you don’t lose it.');
   note.id = 'soloNote';
   wrap.parentNode.insertBefore(note, wrap.nextSibling);
 }
 
-// The five OTS stages, in order — used to draw the "where you could be" ladder.
+// The five OTS stages, in order, used to draw the "where you could be" ladder.
 const STAGES = ['Waking Up', 'Aware', 'In Motion', 'Building', 'Outsmarting'];
 
 function buildGapSection(t) {
@@ -1387,7 +1387,7 @@ function buildGapSection(t) {
     const next = STAGES[idx + 1];
     wrap.appendChild(elem('div', 'ladder-label', next
       ? 'You’re at “' + t.stage_display + '.” Next: “' + next + '.”'
-      : 'You’re at “' + t.stage_display + '” — the top. Keep compounding.'));
+      : 'You’re at “' + t.stage_display + '”, the top. Keep compounding.'));
   }
 
   if (t.growth_horizon) {
@@ -1420,13 +1420,13 @@ function scrollResultTop() {
 
 // ─── RESULT PDF ──────────────────────────────────────────────────────────
 // Drawn directly with jsPDF (vendored locally, no CDN). No html2canvas/DOM
-// rasterization — that approach hung the main thread on some browsers and the
+// rasterization, that approach hung the main thread on some browsers and the
 // window.print() fallback froze the tab. This is synchronous, fast, and crisp.
 function downloadResultPDF() {
   const btn = document.querySelector('.result-pdf');
   if (!window.jspdf || !window.jspdf.jsPDF) {
     console.error('jsPDF not loaded');
-    if (btn) btn.textContent = 'PDF unavailable — reload the page';
+    if (btn) btn.textContent = 'PDF unavailable, reload the page';
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
@@ -1437,7 +1437,7 @@ function downloadResultPDF() {
     if (btn) { btn.disabled = false; btn.textContent = '⤓  Save my result as a PDF'; }
   } catch (e) {
     console.error('PDF error:', e);
-    if (btn) { btn.disabled = false; btn.textContent = 'Couldn’t make the PDF — try again'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Couldn’t make the PDF, try again'; }
   }
 }
 
@@ -1466,7 +1466,7 @@ function buildResultPdfDoc() {
   // One System Map station: a dot marker + label + text (no raw numbers).
   function station(label, text, accent) {
     if (!text) return;
-    // Keep the label with its text — never orphan a label at a page bottom.
+    // Keep the label with its text, never orphan a label at a page bottom.
     doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
     const stLines = doc.splitTextToSize(String(text), W - 8);
     ensureSpace(6 + stLines.length * 11 * PT * 1.16 + 5);
@@ -1488,10 +1488,10 @@ function buildResultPdfDoc() {
   doc.text('Your System Map', cx + 9, cy + 2.6);
   y = cy + 12;
 
-  block((window.session.teen_first_name || '') + ' — here’s where you are', { size: 19, bold: true, after: 3 });
+  block((window.session.teen_first_name || '') + ', here’s where you are', { size: 19, bold: true, after: 3 });
   if (t.stage_display) block('Stage: ' + t.stage_display, { size: 10, bold: true, color: [47, 109, 240], after: 7 });
 
-  // System Map stations — the branded heart, no raw numbers.
+  // System Map stations, the branded heart, no raw numbers.
   station('YOUR NORTH STAR', t.goal_reflected, [240, 198, 116]);
   const s = t.demonstrated_strength;
   if (s && s.text) {
@@ -1504,7 +1504,7 @@ function buildResultPdfDoc() {
   if (u.framing) station('THE LEVER', u.framing, [47, 109, 240]);
   station('YOUR 7-DAY MOVE', t.seven_day_move, [111, 211, 160]);
 
-  // Where each money skill is starting from — qualitative labels, NEVER numbers.
+  // Where each money skill is starting from, qualitative labels, NEVER numbers.
   const bars = (t.bars || []).filter(b => b.score != null);
   if (bars.length) {
     ensureSpace(8 + bars.length * 7);
@@ -1539,7 +1539,7 @@ function buildResultPdfDoc() {
 }
 
 // ─── SHAREABLE CARD (teen-safe: name + goal + move + brand; no scores/quotes) ──
-// A social-friendly PNG the teen can share and OTS can screenshot for marketing —
+// A social-friendly PNG the teen can share and OTS can screenshot for marketing , 
 // deliberately excludes scores, evidence quotes, family/money-amount content.
 function downloadShareCard() {
   const t = (window.scoringResult && window.scoringResult.teen_output) || {};
@@ -1584,7 +1584,7 @@ function buildTranscript() {
   return conversationHistory
     .filter(t => t.content !== SEED_MARKER)
     .map(t => (t.role === 'user' ? 'TEEN' : 'INTERVIEWER') + ':\n' + stripInternalNote(t.content))
-    .join('\n\n———\n\n');
+    .join('\n\n, , , \n\n');
 }
 
 function stripInternalNote(content) {
@@ -1607,7 +1607,7 @@ function estimateQuestion() {
 
 // ─── SESSION PERSISTENCE ─────────────────────────────────────────────────
 // Uses sessionStorage, NOT localStorage: the transcript survives an accidental
-// reload but is wiped when the tab/browser closes — important because the app is
+// reload but is wiped when the tab/browser closes, important because the app is
 // often set up on a shared or parent's device. After a CRISIS/ABUSE disclosure
 // nothing is persisted at all, and any prior state is purged immediately.
 function saveSession() {
@@ -1696,7 +1696,7 @@ function showResources(flag) {
   // described as "private" or "anonymous"; never promises confidentiality.
   let html =
     '<strong>If you’re carrying something heavy</strong>' +
-    '<p>You can call or text <b>988</b> (Suicide &amp; Crisis Lifeline) any time — it’s free and trained people answer. ' +
+    '<p>You can call or text <b>988</b> (Suicide &amp; Crisis Lifeline) any time, it’s free and trained people answer. ' +
     'You can also chat at <b>988lifeline.org</b>. If you might be in immediate danger, call <b>911</b>.</p>';
   if (flag === 'EXPLOITATION') {
     // Sextortion / image-based coercion: point to removal + reporting help.
@@ -1763,7 +1763,7 @@ function postEvent(name) {
   catch (e) { /* analytics must never break the UX */ }
 }
 
-// One-tap Skip — no need to type "skip" (audit UI #2).
+// One-tap Skip, no need to type "skip" (audit UI #2).
 function skipQuestion() {
   const sendBtn = document.getElementById('sendButton');
   if (window.halted || (sendBtn && sendBtn.disabled)) return;
@@ -1772,7 +1772,7 @@ function skipQuestion() {
   sendMessage();
 }
 
-// End & clear this device — purges the transcript and leaves. Important when the
+// End & clear this device, purges the transcript and leaves. Important when the
 // app is on a shared or parent's device.
 async function endAndClear() {
   if (!confirm('End now and clear this from this device? Your answers won’t be saved or sent.')) return;

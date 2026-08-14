@@ -26,14 +26,22 @@ const REG = { parent_first_name: 'P', parent_email: 'p@x.com', teen_first_name: 
   const get = (path, cookie) => fetch(B + path, { headers: cookie ? { Cookie: cookie } : {} });
   const tokenOf = async (res) => new URL((await res.json()).teen_url).searchParams.get('i');
 
-  await t('one-time invite: link carries a token (not a session id), claim once, then 410', async () => {
+  await t('invite link: token (not session id), re-openable while unfinished, 410 once finished', async () => {
     const token = await tokenOf(await post('/api/register', REG));
     assert.ok(token, 'invite token present in the link');
     const s1 = await post('/api/session/start', { i: token });
-    assert.strictEqual(s1.status, 200, 'first claim ok');
-    assert.ok(cookieFrom(s1), 'cookie set to the session id (never in the link)');
+    assert.strictEqual(s1.status, 200, 'first open ok');
+    const cookie = cookieFrom(s1);
+    assert.ok(cookie, 'cookie set to the session id (never in the link)');
+    // The annoyance fix: re-opening an unfinished Map must work (new device, lost tab).
     const s2 = await post('/api/session/start', { i: token });
-    assert.strictEqual(s2.status, 410, 'second claim of the same link -> 410');
+    assert.strictEqual(s2.status, 200, 'second open of an UNFINISHED Map still works');
+    assert.ok(cookieFrom(s2), 'a fresh cookie is issued on re-open');
+    // TRUST-0 still holds: once finished, the link cannot reach the result.
+    const sid = (cookie.split('=')[1] || '');
+    await db.updateSession(decodeURIComponent(sid), { interview_complete: true });
+    const s3 = await post('/api/session/start', { i: token });
+    assert.strictEqual(s3.status, 410, 'finished Map -> 410 (link can no longer open a result)');
   });
 
   await t('register: under-13 rejected (COPPA), missing consent rejected, 18+ accepted (adult mode)', async () => {

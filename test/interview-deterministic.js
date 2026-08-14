@@ -16,13 +16,13 @@ Module._load = function (request) {
   if (request === 'node-fetch') {
     return function mockFetch(url, opts) {
       if (String(url).includes('api.anthropic.com')) {
-        let text = 'Hey — you good to start? Ready?';
+        let text = 'Hey, you good to start? Ready?';
         try {
           const body = JSON.parse(opts.body);
           const users = body.messages.filter(m => m.role === 'user');
           const last = users.length ? users[users.length - 1].content : '';
           const m = String(last).match(/\[ASKED:Q(\d+)\]/);
-          if (m) text = 'Alright — here is question ' + m[1] + '. [ASKED:Q' + m[1] + ']';
+          if (m) text = 'Alright, here is question ' + m[1] + '. [ASKED:Q' + m[1] + ']';
         } catch (e) {}
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ content: [{ text }] }) });
       }

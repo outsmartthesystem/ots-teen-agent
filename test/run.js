@@ -1,5 +1,5 @@
 // Zero-dependency test suite for the security-critical pure logic.
-//   npm test   (node test/run.js)  — requires deps installed (npm install).
+//   npm test   (node test/run.js) , requires deps installed (npm install).
 // Run WITHOUT DATABASE_URL so the db uses its in-memory backend.
 'use strict';
 const assert = require('assert');
@@ -47,19 +47,27 @@ test('db: updateSession persists report_draft (only allowed fields)', async () =
 });
 
 // ─── go-live hardening: invite / sharing / refine / delete ───────────────
-test('db: one-time invite claim by token hash', async () => {
+test('db: invite by token hash is REUSABLE while unfinished, dead once complete', async () => {
   const id = nid(); const hash = 'hash_' + id;
   await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000, invite_token_hash: hash });
   const c1 = await db.claimInvite({ tokenHash: hash });
   ok(c1 && c1.id === id, 'first claim returns the session row');
-  eq(await db.claimInvite({ tokenHash: hash }), null, 'second claim by token fails (one-time)');
+  const firstUse = (await db.getSession(id)).invite_used_at;
+  ok(firstUse, 'first open is stamped');
+  const c2 = await db.claimInvite({ tokenHash: hash });
+  ok(c2 && c2.id === id, 're-open of an UNFINISHED Map still works (resume on a new device)');
+  eq(String((await db.getSession(id)).invite_used_at), String(firstUse), 'stamp records the FIRST open only');
+  // TRUST-0: once the interview is complete the link can no longer reach the result.
+  await db.updateSession(id, { interview_complete: true });
+  eq(await db.claimInvite({ tokenHash: hash }), null, 'finished Map is no longer reachable by link');
 });
-test('db: one-time invite claim by legacy session id', async () => {
+test('db: legacy session-id invite follows the same unfinished/complete rule', async () => {
   const id = nid();
   await db.createSession({ id, teen_first_name: 'A', teen_age: 15, parent_first_name: 'P', parent_email: 'p@x.com', expires_at: Date.now() + 60000 });
-  const c1 = await db.claimInvite({ sessionId: id });
-  ok(c1 && c1.id === id, 'legacy first claim works');
-  eq(await db.claimInvite({ sessionId: id }), null, 'legacy second claim fails (one-time)');
+  ok((await db.claimInvite({ sessionId: id })), 'legacy first claim works');
+  ok((await db.claimInvite({ sessionId: id })), 'legacy re-open works while unfinished');
+  await db.updateSession(id, { interview_complete: true });
+  eq(await db.claimInvite({ sessionId: id }), null, 'legacy claim dies once complete');
 });
 test('db: expired invite cannot be claimed', async () => {
   const id = nid(); const hash = 'h_' + id;
@@ -310,7 +318,7 @@ test('buildApprovedItems: top-level fields (gh1) selectable; support_request add
 });
 
 // ───────── pa1/cq1 into the teen veto (go-live hardening TRUST-2) ─────────
-test('buildApprovedItems: pa1/cq1 ride the veto — kept only when included', () => {
+test('buildApprovedItems: pa1/cq1 ride the veto, kept only when included', () => {
   const draft = { shareable_items: [{ id: 's1', category: 'what_matters', text: 'g', evidence_quote: null }], parent_action: 'do X', conversation_starter: 'ask Y' };
   const kept = srv.buildApprovedItems(draft, [{ id: 's1', include: true }, { id: 'pa1', include: true }, { id: 'cq1', include: false }], '');
   ok(kept.some(i => i.id === 'pa1' && i.category === 'parent_action'), 'pa1 kept when included');
@@ -334,7 +342,7 @@ test('buildParentEmail: Handshake renders sr1/pa1/cq1 from approved items only',
   ok(email.html.includes('give me options first'), 'support text in handshake');
   ok(email.html.includes('walk through one real bill'), 'parent action in handshake');
   ok(email.html.includes('What money thing are you figuring out?'), 'conversation starter in handshake');
-  // sr1/pa1/cq1 must NOT also render as generic labelled items — only s1 does.
+  // sr1/pa1/cq1 must NOT also render as generic labelled items, only s1 does.
   const genericCount = (email.html.match(/border-left:3px solid #2f6df0/g) || []).length;
   eq(genericCount, 1, 'only the one generic item (what_matters) in the list');
 });
@@ -358,7 +366,7 @@ test('SAFETY taxonomy: sentinel + flag sets cover CRISIS/ABUSE/EXPLOITATION/THRE
     ok(!srv.SAFETY_BLOCK_FLAGS.has(f), f + ' does NOT block the report');
   });
 });
-test('buildSafetyEmail: EXPLOITATION — sextortion class, do-not-contact, removal resources, enriched payload', () => {
+test('buildSafetyEmail: EXPLOITATION, sextortion class, do-not-contact, removal resources, enriched payload', () => {
   const e = srv.buildSafetyEmail('EXPLOITATION', { teen_first_name: 'Avi', teen_age: 16, sid: 'sess_x', event_id: 'ab12cd', created_at: '2026-07-09T20:14:33Z' });
   ok(/EXPLOITATION_SEXTORTION/.test(e.subject), 'granular class in subject');
   ok(/Event ab12cd/.test(e.subject), 'event id in subject');
@@ -366,13 +374,13 @@ test('buildSafetyEmail: EXPLOITATION — sextortion class, do-not-contact, remov
   ok(/takeitdown\.ncmec\.org/i.test(e.html) && /CyberTipline/i.test(e.html), 'image-removal + reporting resources');
   ok(e.text.includes('Severity: high') && e.text.includes('Interview state: halted') && e.text.includes('Parent report state: blocked'), 'text payload carries severity + states');
 });
-test('buildSafetyEmail: THREAT — threat-to-others class, supervisor escalation (not abuse banner)', () => {
+test('buildSafetyEmail: THREAT, threat-to-others class, supervisor escalation (not abuse banner)', () => {
   const e = srv.buildSafetyEmail('THREAT', { teen_first_name: 'Sam', teen_age: 15, sid: 'sess_y', event_id: 'ff00aa' });
   ok(/CRISIS_THREAT_TO_OTHERS/.test(e.subject), 'threat-to-others class in subject');
   ok(/Escalate to a supervisor/i.test(e.html), 'supervisor escalation banner');
   ok(!/The parent who set this up may be the concern/i.test(e.html), 'not the abuse do-not-contact banner');
 });
-test('buildSafetyEmail: redaction — no teen disclosure/transcript field ever leaks into the alert', () => {
+test('buildSafetyEmail: redaction, no teen disclosure/transcript field ever leaks into the alert', () => {
   const e = srv.buildSafetyEmail('CRISIS', { teen_first_name: 'Kai', teen_age: 15, sid: 's', event_id: 'e', disclosure: 'SECRET_TEEN_WORDS', transcript: 'SECRET_TEEN_WORDS' });
   ok(!/SECRET_TEEN_WORDS/.test(e.html) && !/SECRET_TEEN_WORDS/.test(e.text), 'no quotes/transcript in the alert');
   ok(/CRISIS_SELF_HARM/.test(e.subject), 'self-harm gets its own granular class');
@@ -409,7 +417,7 @@ test('chipsFor + GOAL_Q_RE: each question routes to the right chips; goal pins o
   });
   // Curly-apostrophe robustness (the model often outputs typographic quotes).
   ok(srv.chipsFor('When money’s on your mind, what’s it usually about?'), 'Q3 chips fire with curly apostrophes');
-  ok(srv.chipsFor('So — how’d you get it?'), 'Q7 chips fire with a curly apostrophe');
+  ok(srv.chipsFor('So, how’d you get it?'), 'Q7 chips fire with a curly apostrophe');
   // Goal pins ONLY off Q4's wording, not any other question.
   ok(srv.GOAL_Q_RE.test(srv.QUESTION_REGISTRY[3].text), 'GOAL_Q_RE matches Q4');
   srv.QUESTION_REGISTRY.filter(q => q.n !== 4).forEach(q => ok(!srv.GOAL_Q_RE.test(q.text), 'GOAL_Q_RE does NOT match Q' + q.n));

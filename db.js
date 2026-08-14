@@ -1,9 +1,11 @@
 // ─── SESSION / REPORT STORE ─────────────────────────────────────────────────
-// Durable server-side session state. The teen link carries a one-time INVITE
-// token (not the session id); on first open the server atomically claims the
-// invite and issues an HttpOnly cookie carrying the OPAQUE session id — which
-// never appears in any link — so the link can never be reused to view a result
-// and is not a bearer credential (go-live hardening, TRUST-0/1). Backed by
+// Durable server-side session state. The teen link carries an INVITE token (not
+// the session id); on open the server claims the invite and issues an HttpOnly
+// cookie carrying the OPAQUE session id, which never appears in any link. The
+// invite stays usable until the interview is COMPLETE (so a teen can resume on a
+// new device, in a new browser, or after clearing cookies), then stops working,
+// which is what keeps a finished result out of reach of anyone else holding the
+// link (go-live hardening, TRUST-0/1). Backed by
 // Postgres when DATABASE_URL is set; an in-memory Map otherwise (dev/test only).
 //
 // Row shape (see init() for the authoritative column list):
@@ -70,7 +72,7 @@ async function init() {
   await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS coach_report_sent_at TIMESTAMPTZ`);
   // Look up sessions by invite token hash during the one-time claim.
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_sessions_invite ON sessions (invite_token_hash)`);
-  // Consumed Stripe checkout sessions — one purchase = one teen setup.
+  // Consumed Stripe checkout sessions (one purchase = one teen setup).
   await pool.query(`CREATE TABLE IF NOT EXISTS payments (stripe_session_id TEXT PRIMARY KEY, consumed_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   initialized = true;
 }
@@ -119,24 +121,27 @@ async function getSession(id) {
   return row;
 }
 
-// One-time invite claim (TRUST-0/1). Given EITHER an invite token hash (new
-// links) OR a legacy session id (links minted before this change), atomically
-// mark the invite used and return the session row — but only if it wasn't used
-// before and hasn't expired. Concurrent/repeat opens get null. The caller then
-// sets the cookie to the returned row's id (which the link never contained for
-// new-style links).
+// Invite claim (TRUST-0/1). Given EITHER an invite token hash (new links) OR a
+// legacy session id (links minted before invite tokens existed), stamp the first
+// use and return the session row, but only while the interview is UNFINISHED and
+// the row hasn't expired. Re-opening an in-progress Map is allowed on purpose, so
+// a teen who loses the tab, switches device, or clears cookies can pick up where
+// they left off. Once interview_complete flips true the claim returns null, so a
+// finished result can only be reached from the cookie that produced it. The
+// caller then sets the cookie to the returned row's id (which the link never
+// contained for new-style links).
 async function claimInvite({ tokenHash, sessionId }) {
   if (pool) {
     let r;
     if (tokenHash) {
       r = await pool.query(
-        `UPDATE sessions SET invite_used_at = now()
-         WHERE invite_token_hash = $1 AND invite_used_at IS NULL AND expires_at > now()
+        `UPDATE sessions SET invite_used_at = COALESCE(invite_used_at, now())
+         WHERE invite_token_hash = $1 AND interview_complete = false AND expires_at > now()
          RETURNING *`, [tokenHash]);
     } else if (sessionId) {
       r = await pool.query(
-        `UPDATE sessions SET invite_used_at = now()
-         WHERE id = $1 AND invite_used_at IS NULL AND expires_at > now()
+        `UPDATE sessions SET invite_used_at = COALESCE(invite_used_at, now())
+         WHERE id = $1 AND interview_complete = false AND expires_at > now()
          RETURNING *`, [sessionId]);
     } else { return null; }
     return r.rows[0] || null;
@@ -146,9 +151,9 @@ async function claimInvite({ tokenHash, sessionId }) {
   if (tokenHash) { for (const v of mem.values()) { if (v.invite_token_hash === tokenHash) { row = v; break; } } }
   else if (sessionId) { row = mem.get(sessionId); }
   if (!row) return null;
-  if (row.invite_used_at) return null;
+  if (row.interview_complete) return null; // finished Maps are no longer reachable by link
   if (new Date(row.expires_at).getTime() < Date.now()) return null;
-  row.invite_used_at = new Date();
+  if (!row.invite_used_at) row.invite_used_at = new Date(); // stamp FIRST open only
   return row;
 }
 
